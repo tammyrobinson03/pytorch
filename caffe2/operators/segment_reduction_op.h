@@ -1,10 +1,15 @@
 #ifndef CAFFE2_OPERATORS_SEGMENT_REDUCTION_OP_H_
 #define CAFFE2_OPERATORS_SEGMENT_REDUCTION_OP_H_
 
+#include "caffe2/core/export_caffe2_op_to_c10.h"
 #include "caffe2/core/context.h"
 #include "caffe2/core/logging.h"
 #include "caffe2/core/operator.h"
 #include "caffe2/operators/reducer_functors.h"
+
+C10_DECLARE_EXPORT_CAFFE2_OP_TO_C10(LengthsSum);
+C10_DECLARE_EXPORT_CAFFE2_OP_TO_C10(LengthsMean);
+C10_DECLARE_EXPORT_CAFFE2_OP_TO_C10(LengthsMax);
 
 namespace caffe2 {
 
@@ -54,13 +59,12 @@ class AbstractSortedSegmentRangeOp : public Operator<Context> {
   bool RunOnDevice() override {
     auto& dataInput = Input(DATA);
     auto& segment_ids = Input(SEGMENT_IDS);
-    auto* output = Output(0);
 
-    CAFFE_ENFORCE_EQ(1, segment_ids.ndim(), "SEGMENT_IDS must be a vector");
-    auto N = segment_ids.dim(0);
+    CAFFE_ENFORCE_EQ(1, segment_ids.dim(), "SEGMENT_IDS must be a vector");
+    auto N = segment_ids.size(0);
     CAFFE_ENFORCE_EQ(
         N,
-        dataInput.dim(0),
+        dataInput.size(0),
         "SEGMENT_IDS must have the same length as outer dimension of DATA");
 
     OPERATOR_NEEDS_FEATURE(
@@ -74,7 +78,7 @@ class AbstractSortedSegmentRangeOp : public Operator<Context> {
     const SIndex K = N > 0 ? s_ids[N - 1] + 1 : 0;
     auto shape = dataInput.sizes().vec();
     shape[0] = K;
-    output->Resize(shape);
+    auto* output = Output(0, shape, at::dtype<T>());
 
     T* out = output->template mutable_data<T>();
 
@@ -132,10 +136,9 @@ class AbstractSortedSegmentRangeGradientOp : public Operator<Context> {
     auto& data_out = Input(DATA_OUT);
     auto& segment_grads = Input(SEGMENT_GRADS);
     auto& segment_ids = Input(SEGMENT_IDS);
-    auto* data_grads = Output(0);
 
-    CAFFE_ENFORCE_EQ(1, segment_ids.ndim(), "SEGMENT_IDS must be a vector");
-    int64_t N = segment_ids.dim(0);
+    CAFFE_ENFORCE_EQ(1, segment_ids.dim(), "SEGMENT_IDS must be a vector");
+    int64_t N = segment_ids.size(0);
 
     const SIndex* s_ids = segment_ids.template data<SIndex>();
     const T* s_grads = segment_grads.template data<T>();
@@ -144,9 +147,9 @@ class AbstractSortedSegmentRangeGradientOp : public Operator<Context> {
 
     auto shape = segment_grads.sizes().vec();
     shape[0] = N;
-    data_grads->Resize(shape);
+    auto* data_grads = Output(0, shape, at::dtype<T>());
 
-    const SIndex K = segment_grads.dim(0);
+    const SIndex K = segment_grads.size(0);
     T* out = data_grads->template mutable_data<T>();
 
     if (N == 0) {
@@ -284,8 +287,9 @@ class AbstractReduceFrontOrBackOp : public Operator<Context> {
  public:
   USE_OPERATOR_CONTEXT_FUNCTIONS;
 
-  AbstractReduceFrontOrBackOp(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<Context>(operator_def, ws),
+  template <class... Args>
+  explicit AbstractReduceFrontOrBackOp(Args&&... args)
+      : Operator<Context>(std::forward<Args>(args)...),
         OP_SINGLE_ARG(int, "num_reduce_dim", num_reduce_dims_, 1) {}
 
   bool RunOnDevice() override {
@@ -294,7 +298,7 @@ class AbstractReduceFrontOrBackOp : public Operator<Context> {
     // to the reducer class
     int64_t in_block_size = FirstDim
         ? data.size_from_dim(num_reduce_dims_)
-        : data.size_to_dim(data.ndim() - num_reduce_dims_);
+        : data.size_to_dim(data.dim() - num_reduce_dims_);
     return DispatchHelper<typename Reducer::FixedDispatch>::call(
         this, in_block_size);
   }
@@ -302,9 +306,8 @@ class AbstractReduceFrontOrBackOp : public Operator<Context> {
   template <int FixedSize>
   bool DoRunWithValue() {
     auto& data = Input(0);
-    auto* output = Output(0);
 
-    CAFFE_ENFORCE_LE(num_reduce_dims_, data.ndim());
+    CAFFE_ENFORCE_LE(num_reduce_dims_, data.dim());
 
     typename Reducer::Meta ctx(FirstDim);
     ctx.observeInput(0, data, num_reduce_dims_);
@@ -321,13 +324,13 @@ class AbstractReduceFrontOrBackOp : public Operator<Context> {
 
     vector<int64_t> shape;
     ctx.appendOutputShape(&shape);
-    output->Resize(shape);
+    auto* output = Output(0, shape, at::dtype<T>());
 
     T* out = output->template mutable_data<T>();
 
     const int block_size = FirstDim
         ? data.size_from_dim(num_reduce_dims_)
-        : data.size_from_dim(data.ndim() - num_reduce_dims_);
+        : data.size_from_dim(data.dim() - num_reduce_dims_);
 
     const int num_blocks = block_size > 0 ? data.numel() / block_size : 0;
 
@@ -356,10 +359,9 @@ class AbstractReduceFrontOrBackGradientOp : public Operator<Context> {
  public:
   USE_OPERATOR_CONTEXT_FUNCTIONS;
 
-  AbstractReduceFrontOrBackGradientOp(
-      const OperatorDef& operator_def,
-      Workspace* ws)
-      : Operator<Context>(operator_def, ws),
+  template <class... Args>
+  explicit AbstractReduceFrontOrBackGradientOp(Args&&... args)
+      : Operator<Context>(std::forward<Args>(args)...),
         OP_SINGLE_ARG(int, "num_reduce_dim", num_reduce_dims_, 1) {}
 
   bool RunOnDevice() override {
@@ -374,8 +376,6 @@ class AbstractReduceFrontOrBackGradientOp : public Operator<Context> {
   bool DoRunWithValue() {
     auto& reduction_grad = Input(REDUCTION_GRAD);
     auto& source_shape = this->template Input<Tensor>(SOURCE_SHAPE, CPU);
-
-    auto* data_grads = Output(0);
 
     typename ReducerGradient::Meta ctx(reduction_grad, 0, FirstDim);
     for (int i = 0; i < ReducerGradient::originalInputs().size(); ++i) {
@@ -395,11 +395,11 @@ class AbstractReduceFrontOrBackGradientOp : public Operator<Context> {
         source_shape.template data<int64_t>(),
         source_shape.template data<int64_t>() + source_shape.numel());
 
-    data_grads->Resize(shape);
+    auto* data_grads = Output(0, shape, at::dtype<T>());
 
     int64_t block_size = FirstDim
         ? data_grads->size_from_dim(num_reduce_dims_)
-        : data_grads->size_from_dim(data_grads->ndim() - num_reduce_dims_);
+        : data_grads->size_from_dim(data_grads->dim() - num_reduce_dims_);
     int64_t block_num = block_size > 0 ? data_grads->numel() / block_size : 0;
 
     T* out = data_grads->template mutable_data<T>();
@@ -618,19 +618,18 @@ class AbstractSortedSegmentOp : public Operator<Context> {
   bool DoRunWithValue() {
     auto& dataInput = Input(0);
     auto& segment_ids = Input(SEGMENT_IDS);
-    auto* output = Output(0);
 
-    CAFFE_ENFORCE_EQ(1, segment_ids.ndim(), "SEGMENT_IDS must be a vector");
-    int64_t N = segment_ids.dim(0);
-    const int64_t M = dataInput.dim(0);
+    CAFFE_ENFORCE_EQ(1, segment_ids.dim(), "SEGMENT_IDS must be a vector");
+    int64_t N = segment_ids.size(0);
+    const int64_t M = dataInput.size(0);
 
     const IndexType* idxs;
     if (SparseFused) { // static if
       auto& indices = Input(INDICES);
-      CAFFE_ENFORCE_EQ(1, indices.ndim(), "INDICES must be a vector");
+      CAFFE_ENFORCE_EQ(1, indices.dim(), "INDICES must be a vector");
       CAFFE_ENFORCE_EQ(
           N,
-          indices.dim(0),
+          indices.size(0),
           "SEGMENT_IDS must have the same length as INDICES");
       idxs = indices.template data<IndexType>();
     } else {
@@ -646,7 +645,7 @@ class AbstractSortedSegmentOp : public Operator<Context> {
       auto& aux_in = Input(i);
       CAFFE_ENFORCE_EQ(
           N,
-          aux_in.dim(0),
+          aux_in.size(0),
           "Input ",
           i,
           " must have the same first dim as SEGMENT_IDS");
@@ -665,7 +664,7 @@ class AbstractSortedSegmentOp : public Operator<Context> {
     vector<int64_t> shape;
     shape.push_back(K);
     ctx.appendOutputShape(&shape);
-    output->Resize(shape);
+    auto* output = Output(0, shape, at::dtype<T>());
 
     T* out = output->template mutable_data<T>();
     if (N == 0) {
@@ -739,17 +738,16 @@ class AbstractSortedSegmentGradientOp : public Operator<Context> {
   bool DoRunWithValue() {
     auto& segment_grads = Input(SEGMENT_GRADS);
     auto& segment_ids = Input(SEGMENT_IDS);
-    auto* data_grads = Output(0);
 
-    CAFFE_ENFORCE_EQ(1, segment_ids.ndim(), "SEGMENT_IDS must be a vector");
-    int64_t N = segment_ids.dim(0);
+    CAFFE_ENFORCE_EQ(1, segment_ids.dim(), "SEGMENT_IDS must be a vector");
+    int64_t N = segment_ids.size(0);
 
     typename ReducerGradient::Meta ctx(segment_grads, 1);
     for (int i = 0; i < ReducerGradient::originalInputs().size(); ++i) {
       auto& aux_in = Input(i);
       CAFFE_ENFORCE_EQ(
           N,
-          aux_in.dim(0),
+          aux_in.size(0),
           "Input ",
           i,
           " must have the same first dim as SEGMENT_IDS");
@@ -763,10 +761,10 @@ class AbstractSortedSegmentGradientOp : public Operator<Context> {
     vector<int64_t> shape;
     shape.push_back(N);
     ctx.appendGradShape(&shape);
-    data_grads->Resize(shape);
+    auto* data_grads = Output(0, shape, at::dtype<T>());
 
     int64_t d_block_size = data_grads->size_from_dim(1);
-    const SIndex K = segment_grads.dim(0);
+    const SIndex K = segment_grads.size(0);
     int64_t s_block_size = segment_grads.size_from_dim(1);
     T* out = data_grads->template mutable_data<T>();
 
@@ -995,8 +993,9 @@ class AbstractUnsortedSegmentOp : public Operator<Context> {
  public:
   USE_OPERATOR_CONTEXT_FUNCTIONS;
 
-  AbstractUnsortedSegmentOp(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<Context>(operator_def, ws),
+  template <class... Args>
+  explicit AbstractUnsortedSegmentOp(Args&&... args)
+      : Operator<Context>(std::forward<Args>(args)...),
         OP_SINGLE_ARG(int, "num_segments", num_segments_, -1) {}
 
   bool RunOnDevice() override {
@@ -1022,19 +1021,18 @@ class AbstractUnsortedSegmentOp : public Operator<Context> {
   bool DoRunWithValue() {
     auto& data = Input(0);
     auto& segment_ids = Input(SEGMENT_IDS);
-    auto* output = Output(0);
 
-    CAFFE_ENFORCE_EQ(1, segment_ids.ndim(), "SEGMENT_IDS must be a vector");
-    int64_t N = segment_ids.dim(0);
-    const int64_t M = data.dim(0);
+    CAFFE_ENFORCE_EQ(1, segment_ids.dim(), "SEGMENT_IDS must be a vector");
+    int64_t N = segment_ids.size(0);
+    const int64_t M = data.size(0);
 
     const IndexType* idxs;
     if (SparseFused) { // static if
       auto& indices = Input(INDICES);
-      CAFFE_ENFORCE_EQ(1, indices.ndim(), "INDICES must be a vector");
+      CAFFE_ENFORCE_EQ(1, indices.dim(), "INDICES must be a vector");
       CAFFE_ENFORCE_EQ(
           N,
-          indices.dim(0),
+          indices.size(0),
           "SEGMENT_IDS must have the same length as INDICES");
       idxs = indices.template data<IndexType>();
     } else {
@@ -1050,7 +1048,7 @@ class AbstractUnsortedSegmentOp : public Operator<Context> {
       auto& aux_in = Input(i);
       CAFFE_ENFORCE_EQ(
           N,
-          aux_in.dim(0),
+          aux_in.size(0),
           "Input ",
           i,
           " must have the same first dim as SEGMENT_IDS");
@@ -1078,7 +1076,7 @@ class AbstractUnsortedSegmentOp : public Operator<Context> {
     vector<int64_t> shape;
     shape.push_back(K);
     ctx.appendOutputShape(&shape);
-    output->Resize(shape);
+    auto* output = Output(0, shape, at::dtype<T>());
 
     int64_t in_block_size = data.size_from_dim(1);
     int64_t out_block_size = output->size_from_dim(1);
@@ -1155,17 +1153,16 @@ class AbstractUnsortedSegmentGradientOp : public Operator<Context> {
   bool DoRunWithValue() {
     auto& segment_grads = Input(SEGMENT_GRADS);
     auto& segment_ids = Input(SEGMENT_IDS);
-    auto* data_grads = Output(0);
 
-    CAFFE_ENFORCE_EQ(1, segment_ids.ndim(), "SEGMENT_IDS must be a vector");
-    int64_t N = segment_ids.dim(0);
+    CAFFE_ENFORCE_EQ(1, segment_ids.dim(), "SEGMENT_IDS must be a vector");
+    int64_t N = segment_ids.size(0);
 
     typename ReducerGradient::Meta ctx(segment_grads, 1);
     for (int i = 0; i < ReducerGradient::originalInputs().size(); ++i) {
       auto& aux_in = Input(i);
       CAFFE_ENFORCE_EQ(
           N,
-          aux_in.dim(0),
+          aux_in.size(0),
           "Input ",
           i,
           " must have the same first dim as SEGMENT_IDS");
@@ -1179,10 +1176,10 @@ class AbstractUnsortedSegmentGradientOp : public Operator<Context> {
     vector<int64_t> shape;
     shape.push_back(N);
     ctx.appendGradShape(&shape);
-    data_grads->Resize(shape);
+    auto* data_grads = Output(0, shape, at::dtype<T>());
 
     int64_t d_block_size = data_grads->size_from_dim(1);
-    const SIndex K = segment_grads.dim(0);
+    const SIndex K = segment_grads.size(0);
     int64_t s_block_size = segment_grads.size_from_dim(1);
     T* out = data_grads->template mutable_data<T>();
 
@@ -1416,20 +1413,19 @@ class AbstractLengthsOp : public Operator<Context> {
   bool DoRunWithValue() {
     auto& dataInput = Input(0);
     auto& lengthsInput = Input(LENGTHS);
-    auto* output = Output(0);
 
-    CAFFE_ENFORCE_EQ(1, lengthsInput.ndim(), "LENGTHS must be a vector");
-    const int64_t dataSize = dataInput.dim(0);
+    CAFFE_ENFORCE_EQ(1, lengthsInput.dim(), "LENGTHS must be a vector");
+    const int64_t dataSize = dataInput.size(0);
     // Either first dim the data or how much we pull in indexies from it
     int64_t dataToReduceSize;
-    const int64_t outputSize = lengthsInput.dim(0);
+    const int64_t outputSize = lengthsInput.size(0);
 
     const IndexType* indices;
     if (SparseFused) { // static if
       auto& indicesInput = Input(INDICES);
-      CAFFE_ENFORCE_EQ(1, indicesInput.ndim(), "INDICES must be a vector");
+      CAFFE_ENFORCE_EQ(1, indicesInput.dim(), "INDICES must be a vector");
       indices = indicesInput.template data<IndexType>();
-      dataToReduceSize = indicesInput.dim(0);
+      dataToReduceSize = indicesInput.size(0);
     } else {
       dataToReduceSize = dataSize;
     }
@@ -1439,7 +1435,7 @@ class AbstractLengthsOp : public Operator<Context> {
     for (int i = 1; i < Reducer::kInputCount; ++i) {
       auto& aux_in = Input(i);
       CAFFE_ENFORCE(
-          dataToReduceSize == aux_in.dim(0),
+          dataToReduceSize == aux_in.size(0),
           "Input ",
           i,
           " must have the same first dim as SEGMENT_IDS");
@@ -1456,7 +1452,7 @@ class AbstractLengthsOp : public Operator<Context> {
 
     vector<int64_t> shape{outputSize};
     ctx.appendOutputShape(&shape);
-    output->Resize(shape);
+    auto* output = Output(0, shape, at::dtype<TData>());
 
     int64_t in_block_size = dataInput.size_from_dim(1);
     int64_t out_block_size = output->size_from_dim(1);
@@ -1545,24 +1541,23 @@ class AbstractLengthsGradientOp : public Operator<Context> {
   bool DoRunWithValue() {
     auto& segmentGradsInput = Input(SEGMENT_GRADS);
     auto& lengthsInput = Input(LENGTHS);
-    auto* dataGradsOutput = Output(0);
 
-    CAFFE_ENFORCE(lengthsInput.ndim() == 1, "LENGTHS must be a vector");
+    CAFFE_ENFORCE(lengthsInput.dim() == 1, "LENGTHS must be a vector");
     int64_t reducedDataSize = 0;
-    int64_t numSegments = lengthsInput.dim(0);
-    CAFFE_ENFORCE(segmentGradsInput.ndim() > 0);
-    CAFFE_ENFORCE(numSegments == segmentGradsInput.dim(0));
+    int64_t numSegments = lengthsInput.size(0);
+    CAFFE_ENFORCE(segmentGradsInput.dim() > 0);
+    CAFFE_ENFORCE(numSegments == segmentGradsInput.size(0));
     const TLengths* lengths = lengthsInput.template data<TLengths>();
     for (int64_t i = 0; i < numSegments; ++i) {
       reducedDataSize += lengths[i];
     }
 
     typename ReducerGradient::Meta ctx(segmentGradsInput, 1);
-    for (int i = 0; i < ReducerGradient::originalInputs().size(); ++i) {
+    for (auto i = 0U; i < ReducerGradient::originalInputs().size(); ++i) {
       auto& aux_in = Input(i);
       CAFFE_ENFORCE_EQ(
           reducedDataSize,
-          aux_in.dim(0),
+          aux_in.size(0),
           "Input ",
           i,
           " must have the same first dim as SEGMENT_IDS");
@@ -1575,7 +1570,7 @@ class AbstractLengthsGradientOp : public Operator<Context> {
     vector<int64_t> shape;
     shape.push_back(reducedDataSize);
     ctx.appendGradShape(&shape);
-    dataGradsOutput->Resize(shape);
+    auto* dataGradsOutput = Output(0, shape, at::dtype<T>());
 
     int64_t dataGradsBlockSize = dataGradsOutput->size_from_dim(1);
     int64_t segmentBlockSize = segmentGradsInput.size_from_dim(1);
@@ -1652,12 +1647,11 @@ class AbstractLengthsWithMainInputGradientOp : public Operator<Context> {
     auto& dataInput = Input(DATA_INPUT);
     auto& segmentGradsInput = Input(SEGMENT_GRADS);
     auto& lengthsInput = Input(LENGTHS);
-    auto* dataGradsOutput = Output(0);
 
-    CAFFE_ENFORCE(lengthsInput.ndim() == 1, "LENGTHS must be a vector");
-    int64_t numSegments = lengthsInput.dim(0);
-    CAFFE_ENFORCE(segmentGradsInput.ndim() > 0);
-    CAFFE_ENFORCE(numSegments == segmentGradsInput.dim(0));
+    CAFFE_ENFORCE(lengthsInput.dim() == 1, "LENGTHS must be a vector");
+    int64_t numSegments = lengthsInput.size(0);
+    CAFFE_ENFORCE(segmentGradsInput.dim() > 0);
+    CAFFE_ENFORCE(numSegments == segmentGradsInput.size(0));
     const TLengths* lengths = lengthsInput.template data<TLengths>();
 
     typename ReducerGradient::Meta ctx(segmentGradsInput, 1);
@@ -1674,9 +1668,9 @@ class AbstractLengthsWithMainInputGradientOp : public Operator<Context> {
     if (SparseFused) { // static if
       auto& indicesInput = Input(INDICES);
       indices = indicesInput.template data<IndexType>();
-      dataToReduceSize = indicesInput.dim(0);
+      dataToReduceSize = indicesInput.size(0);
     } else {
-      dataToReduceSize = dataInput.dim(0);
+      dataToReduceSize = dataInput.size(0);
     }
 
     const T* segmentGrads = segmentGradsInput.template data<T>();
@@ -1684,7 +1678,7 @@ class AbstractLengthsWithMainInputGradientOp : public Operator<Context> {
     vector<int64_t> shape;
     shape.push_back(dataToReduceSize);
     ctx.appendGradShape(&shape);
-    dataGradsOutput->Resize(shape);
+    auto* dataGradsOutput = Output(0, shape, at::dtype<T>());
 
     int64_t dataGradsBlockSize = dataGradsOutput->size_from_dim(1);
     int64_t segmentBlockSize = segmentGradsInput.size_from_dim(1);
@@ -1754,12 +1748,11 @@ class AbstractLengthsWithMainInputAndForwardOutputGradientOp
     auto& segmentGradsInput = Input(SEGMENT_GRADS);
     auto& lengthsInput = Input(LENGTHS);
     auto& forwardOutputInput = Input(FORWARD_OUTPUT);
-    auto* dataGradsOutput = Output(0);
 
-    CAFFE_ENFORCE(lengthsInput.ndim() == 1, "LENGTHS must be a vector");
-    int64_t numSegments = lengthsInput.dim(0);
-    CAFFE_ENFORCE(segmentGradsInput.ndim() > 0);
-    CAFFE_ENFORCE(numSegments == segmentGradsInput.dim(0));
+    CAFFE_ENFORCE(lengthsInput.dim() == 1, "LENGTHS must be a vector");
+    int64_t numSegments = lengthsInput.size(0);
+    CAFFE_ENFORCE(segmentGradsInput.dim() > 0);
+    CAFFE_ENFORCE(numSegments == segmentGradsInput.size(0));
     const TLengths* lengths = lengthsInput.template data<TLengths>();
 
     typename ReducerGradient::Meta ctx(segmentGradsInput, 1);
@@ -1770,18 +1763,18 @@ class AbstractLengthsWithMainInputAndForwardOutputGradientOp
       ctx.observeOriginalInput(aux_num, aux_in, aux_grad, 1);
     }
 
-    CAFFE_ENFORCE(forwardOutputInput.ndim() > 0);
-    CAFFE_ENFORCE(numSegments == forwardOutputInput.dim(0));
+    CAFFE_ENFORCE(forwardOutputInput.dim() > 0);
+    CAFFE_ENFORCE(numSegments == forwardOutputInput.size(0));
     const T* forwardOutput = forwardOutputInput.template data<T>();
 
-    int64_t dataToReduceSize = dataInput.dim(0);
+    int64_t dataToReduceSize = dataInput.size(0);
 
     const T* segmentGrads = segmentGradsInput.template data<T>();
 
     vector<int64_t> shape;
     shape.push_back(dataToReduceSize);
     ctx.appendGradShape(&shape);
-    dataGradsOutput->Resize(shape);
+    auto* dataGradsOutput = Output(0, shape, at::dtype<T>());
 
     int64_t dataGradsBlockSize = dataGradsOutput->size_from_dim(1);
     int64_t segmentBlockSize = segmentGradsInput.size_from_dim(1);
@@ -1988,7 +1981,7 @@ This op is basically Gather and Lengths{op} fused together.
 INDICES should contain integers in range 0..N-1 where N is the first dimension
 of DATA. INDICES represent which slices of DATA need to be pulled in.
 
-LENGTHS is a vector that defines slice sizes by first dimention of DATA. Values
+LENGTHS is a vector that defines slice sizes by first dimension of DATA. Values
 belonging to the same segment are aggregated together. sum(LENGTHS) has
 to match INDICES size.
 
@@ -2013,13 +2006,13 @@ i.e. `len(LENGTHS)`. Other dimensions are inherited from the input tensor.
         "OUTPUT",
         "Aggregated output tensor. Has the first dimension of K "
         "(the number of segments).");
-    schema.TensorInferenceFunction(
+    schema.TensorInferenceFunction(OpSchema::NeedsAllInputShapes(
         [](const OperatorDef&, const std::vector<TensorShape>& input_types) {
           std::vector<TensorShape> out(1);
           out[0] = input_types[0];
           out[0].set_dims(0, input_types[Reducer::kInputCount + 1].dims(0));
           return out;
-        });
+        }));
     ReducerDef::PopulateSchema(schema);
 
     schema.CostInferenceFunction(
@@ -2054,7 +2047,7 @@ i.e. `len(LENGTHS)`. Other dimensions are inherited from the input tensor.
       SIndex,
       Context,
       ReducerGradient>;
-  // Will return 3 input version. This is aliging new CPU/GPU nets.
+  // Will return 3 input version. This is aligning new CPU/GPU nets.
   using GetGradient = LengthsOpGetGradient<
       ForwardOp,
       ReducerDef,

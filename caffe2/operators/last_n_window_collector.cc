@@ -11,8 +11,9 @@ template <class Context>
 class LastNWindowCollectorOp : public Operator<Context> {
  public:
   USE_OPERATOR_CONTEXT_FUNCTIONS;
-  LastNWindowCollectorOp(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<Context>(operator_def, ws),
+  template <class... Args>
+  explicit LastNWindowCollectorOp(Args&&... args)
+      : Operator<Context>(std::forward<Args>(args)...),
         numToCollect_(
             OperatorBase::GetSingleArgument<int>("num_to_collect", -1)) {
     CAFFE_ENFORCE_GT(numToCollect_, 0);
@@ -35,14 +36,14 @@ class LastNWindowCollectorOp : public Operator<Context> {
     auto* output = Output(LAST_N);
     const auto& input = Input(DATA);
 
-    CAFFE_ENFORCE_GE(input.ndim(), 1);
+    CAFFE_ENFORCE_GE(input.dim(), 1);
     bool output_initialized = output->numel() > 0 &&
         (static_cast<std::shared_ptr<std::vector<TensorCPU>>*>(
              output->raw_mutable_data(input.dtype()))[0] != nullptr);
     if (output_initialized) {
-      CAFFE_ENFORCE_EQ(output->ndim(), input.ndim());
-      for (size_t i = 1; i < input.ndim(); ++i) {
-        CAFFE_ENFORCE_EQ(output->dim(i), input.dim(i));
+      CAFFE_ENFORCE_EQ(output->dim(), input.dim());
+      for (size_t i = 1; i < input.dim(); ++i) {
+        CAFFE_ENFORCE_EQ(output->size(i), input.size(i));
       }
     }
 
@@ -71,31 +72,31 @@ class LastNWindowCollectorOp : public Operator<Context> {
     if (num_entries == 0) {
       if (!output_initialized) {
         // Get both shape and meta
-        output->CopyFrom(input, &context_);
+        output->CopyFrom(input, true /*async*/);
       }
       return true;
     }
 
     auto num_to_copy = std::min<int32_t>(num_entries, numToCollect_);
-    auto output_batch_size = output_initialized ? output->dim(0) : 0;
+    auto output_batch_size = output_initialized ? output->size(0) : 0;
     auto output_num =
         std::min<size_t>(numToCollect_, output_batch_size + num_to_copy);
 
     // output_num is >= output_batch_size
     if (output_num > output_batch_size) {
-      output->ExtendTo(output_num, 50, &context_);
+      output->ExtendTo(output_num, 50);
     }
 
     auto* output_data =
         static_cast<char*>(output->raw_mutable_data(input.dtype()));
 
     auto* next = Output(NEXT);
-    CAFFE_ENFORCE_EQ(0, next->ndim());
+    CAFFE_ENFORCE_EQ(0, next->dim());
     auto* next_data = next->template mutable_data<int32_t>();
     if (!output_initialized) {
       *next_data = 0;
     }
-    CAFFE_ENFORCE_LT(*next_data, output->dim(0));
+    CAFFE_ENFORCE_LT(*next_data, output->size(0));
 
     auto block_size = input.size_from_dim(1);
     auto block_bytesize = block_size * input.itemsize();
@@ -141,6 +142,30 @@ OPERATOR_SCHEMA(LastNWindowCollector)
     .NumInputs({3, 4, 5})
     .NumOutputs(2, 3)
     .EnforceInplace({{0, 0}, {1, 1}, {4, 2}})
+    .TensorInferenceFunction([](const OperatorDef& def,
+                                const vector<TensorShape>& in) {
+      auto output_size = def.output_size();
+      vector<TensorShape> out(output_size);
+      const ArgumentHelper helper(def);
+      const auto num_to_collect =
+          helper.GetSingleArgument<int>("num_to_collect", -1);
+
+      const auto data_dims = GetDimsVector(in[2]);
+      vector<int64_t> last_n_shape(data_dims.size());
+      last_n_shape[0] = num_to_collect;
+      std::copy(data_dims.begin() + 1, data_dims.end(), last_n_shape.begin() + 1);
+      out[0] = CreateTensorShape(last_n_shape, in[2].data_type());
+
+      out[1] = in[1];
+
+      if (output_size > 2) {
+        vector<int64_t> num_visited_shape(1);
+        num_visited_shape[0] = 1;
+        out[2] = CreateTensorShape(num_visited_shape, TensorProto::INT64);
+      }
+
+      return out;
+    })
     .SetDoc(R"DOC(
 Collect the last N rows from input data. The purpose is to keep track of data
 accross batches, so for example suppose the LastNWindowCollector is called

@@ -25,7 +25,7 @@ class FindDuplicateElementsOp final : public Operator<Context> {
   template <typename T>
   bool DoRunWithType() {
     const auto& data = Input(0);
-    CAFFE_ENFORCE(data.ndim() == 1, "data should be 1-D.");
+    CAFFE_ENFORCE(data.dim() == 1, "data should be 1-D.");
 
     const auto* data_ptr = data.template data<T>();
     std::unordered_map<T, int64_t> dict;
@@ -40,10 +40,11 @@ class FindDuplicateElementsOp final : public Operator<Context> {
     }
 
     const auto dupSize = dupIndices.size();
-    auto* output = Output(0);
-    output->Resize(dupSize);
+
+    auto* output =
+        Output(0, {static_cast<int64_t>(dupSize)}, at::dtype<int64_t>());
     auto* out_ptr = output->template mutable_data<int64_t>();
-    for (int64_t i = 0; i < dupSize; ++i) {
+    for (size_t i = 0; i < dupSize; ++i) {
       out_ptr[i] = dupIndices[i];
     }
 

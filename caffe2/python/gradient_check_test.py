@@ -2,10 +2,10 @@
 # can gradually remove this test script. DO NOT ADD MORE TESTS TO THIS
 # FILE.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+
+
+
+
 import numpy as np
 from caffe2.python import (
     brew,
@@ -23,9 +23,9 @@ from caffe2.proto import caffe2_pb2
 import unittest
 
 
-if workspace.has_gpu_support and workspace.NumCudaDevices() > 0:
+if workspace.has_gpu_support and workspace.NumGpuDevices() > 0:
     gpu_device_option = caffe2_pb2.DeviceOption()
-    gpu_device_option.device_type = caffe2_pb2.CUDA
+    gpu_device_option.device_type = workspace.GpuDeviceType
     cpu_device_option = caffe2_pb2.DeviceOption()
     gpu_device_checker = device_checker.DeviceChecker(
         0.01, [gpu_device_option]
@@ -458,7 +458,7 @@ class TestIf(test_util.TestCase):
 
         init_net = init_nb.get()[0]
         ITER = init_net.ConstantFill(
-            [], "ITER", shape=[1], value=0, dtype=core.DataType.INT32)
+            [], "ITER", shape=[1], value=0, dtype=core.DataType.INT64)
         train_net.Iter(ITER, ITER)
         LR = train_net.LearningRate(ITER, "LR", base_lr=-0.1,
                                         policy="step", stepsize=20, gamma=0.9)

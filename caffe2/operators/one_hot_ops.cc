@@ -11,8 +11,8 @@ bool BatchOneHotOp<CPUContext>::DoRunWithType() {
   auto& input = Input(X);
   auto& lens = Input(LENS);
   auto& vals = Input(VALS);
-  CAFFE_ENFORCE_GE(input.ndim(), 1);
-  auto N = input.dim(0);
+  CAFFE_ENFORCE_GE(input.dim(), 1);
+  auto N = input.size(0);
   auto D = input.size_from_dim(1);
   CAFFE_ENFORCE_EQ(lens.numel(), D);
 
@@ -27,8 +27,8 @@ bool BatchOneHotOp<CPUContext>::DoRunWithType() {
   valsOffsets_[D] = output_dim;
 
   CAFFE_ENFORCE_EQ(vals.numel(), output_dim);
-  auto* output = Output(ONE_HOT);
-  output->Resize(N, output_dim);
+
+  auto* output = Output(ONE_HOT, {N, output_dim}, at::dtype<T>());
 
   const auto* input_data = input.template data<T>();
   const auto* vals_data = vals.template data<T>();
@@ -110,8 +110,8 @@ bool BatchBucketOneHotOp<CPUContext>::RunOnDevice() {
   auto& input = Input(X);
   auto& lens = Input(LENS);
   auto& boundaries = Input(BOUNDARIES);
-  CAFFE_ENFORCE_GE(input.ndim(), 1);
-  auto N = input.dim(0);
+  CAFFE_ENFORCE_GE(input.dim(), 1);
+  auto N = input.size(0);
   auto D = input.size_from_dim(1);
   CAFFE_ENFORCE_EQ(lens.numel(), D);
 
@@ -128,8 +128,8 @@ bool BatchBucketOneHotOp<CPUContext>::RunOnDevice() {
     // Number of buckets is number of bucket edges + 1
     output_dim += (lens_data[i] + 1);
   }
-  auto* output = Output(ONE_HOT);
-  output->Resize(N, output_dim);
+
+  auto* output = Output(ONE_HOT, {N, output_dim}, at::dtype<float>());
 
   const auto* input_data = input.template data<float>();
   const auto* boundaries_data = boundaries.template data<float>();
@@ -169,15 +169,16 @@ bool BatchBucketOneHotOp<CPUContext>::RunOnDevice() {
 
 class SegmentOneHotOp : public Operator<CPUContext> {
  public:
-  SegmentOneHotOp(const OperatorDef& operator_def, Workspace* ws)
-      : Operator(operator_def, ws) {}
+  template <class... Args>
+  explicit SegmentOneHotOp(Args&&... args)
+      : Operator(std::forward<Args>(args)...) {}
 
   bool RunOnDevice() override {
     auto& lengths = Input(0);
     auto& indices = Input(1);
     auto& index_size_tensor = Input(2);
-    CAFFE_ENFORCE(lengths.ndim() == 1);
-    CAFFE_ENFORCE(indices.ndim() == 1);
+    CAFFE_ENFORCE(lengths.dim() == 1);
+    CAFFE_ENFORCE(indices.dim() == 1);
     CAFFE_ENFORCE(index_size_tensor.numel() == 1);
     auto batch_size = lengths.numel();
     auto index_size = *index_size_tensor.data<int64_t>();
@@ -185,8 +186,8 @@ class SegmentOneHotOp : public Operator<CPUContext> {
 
     auto* lengths_ptr = lengths.data<int32_t>();
     auto* indices_ptr = indices.data<int64_t>();
-    auto* one_hots = Output(0);
-    one_hots->Resize(batch_size, index_size);
+
+    auto* one_hots = Output(0, {batch_size, index_size}, at::dtype<float>());
     auto* one_hots_ptr = one_hots->template mutable_data<float>();
     if (one_hots->numel() == 0) {
       return true;
@@ -356,3 +357,8 @@ NO_GRADIENT(OneHot);
 NO_GRADIENT(SegmentOneHot);
 NO_GRADIENT(BucketBatchOneHot);
 } // namespace caffe2
+
+C10_EXPORT_CAFFE2_OP_TO_C10_CPU(
+    BatchBucketOneHot,
+    "_caffe2::BatchBucketOneHot(Tensor data, Tensor lengths, Tensor boundaries) -> Tensor output",
+    caffe2::BatchBucketOneHotOp<caffe2::CPUContext>);

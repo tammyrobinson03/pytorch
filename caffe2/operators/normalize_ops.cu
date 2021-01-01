@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include <cub/block/block_reduce.cuh>
 
 #include "caffe2/core/context_gpu.h"
@@ -89,7 +91,7 @@ void NormalizeOp<float, CUDAContext>::DoNormalize(
     const int n,
     const int sf) {
   NormalizeKernel<<<
-      min(n, CAFFE_MAXIMUM_NUM_BLOCKS),
+      std::min(n, CAFFE_MAXIMUM_NUM_BLOCKS),
       CAFFE_CUDA_NUM_THREADS,
       0,
       context_.cuda_stream()>>>(m, n, sf, xData, yData, kEps_);
@@ -105,10 +107,10 @@ bool NormalizeGradientOp<float, CUDAContext>::RunOnDevice() {
   const auto canonical_axis =
       X.canonical_axis_index(OperatorBase::GetSingleArgument<int>("axis", -1));
   int N = X.dim32(canonical_axis);
-  int M = X.size() / N;
+  int M = X.numel() / N;
   const int SF = X.size_from_dim(canonical_axis + 1);
   NormalizeGradientKernel<<<
-      min(M, CAFFE_MAXIMUM_NUM_BLOCKS),
+      std::min(M, CAFFE_MAXIMUM_NUM_BLOCKS),
       CAFFE_CUDA_NUM_THREADS,
       0,
       context_.cuda_stream()>>>(
@@ -165,7 +167,7 @@ void NormalizeL1Op<float, CUDAContext>::DoNormalize(
     const int n,
     const int sf) {
   NormalizeL1Kernel<<<
-      min(n, CAFFE_MAXIMUM_NUM_BLOCKS),
+      std::min(n, CAFFE_MAXIMUM_NUM_BLOCKS),
       CAFFE_CUDA_NUM_THREADS,
       0,
       context_.cuda_stream()>>>(m, n, sf, xData, yData);

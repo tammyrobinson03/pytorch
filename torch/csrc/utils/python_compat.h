@@ -1,8 +1,9 @@
 #pragma once
 
-#include "torch/csrc/python_headers.h"
+#include <torch/csrc/python_headers.h>
 
-#if PY_VERSION_HEX < 0x03060100
+// PyPy 3.6 does not yet have PySlice_Unpack
+#if PY_VERSION_HEX < 0x03060100 || defined(PYPY_VERSION)
 
 // PySlice_Unpack not introduced till python 3.6.1
 // included here for backwards compatibility
@@ -69,4 +70,13 @@ __PySlice_Unpack(PyObject *_r,
 #else
 #define THPUtils_parseSlice(SLICE, LEN, START, STOP, LENGTH, STEP) \
   (PySlice_GetIndicesEx((PySliceObject*)SLICE, LEN, START, STOP, LENGTH, STEP) == 0)
+#endif
+
+// This function was introduced in Python 3.4
+#if PY_VERSION_HEX < 0x03040000
+inline int
+PyGILState_Check() {
+  PyThreadState * tstate = _PyThreadState_Current;
+  return tstate && (tstate == PyGILState_GetThisThreadState());
+}
 #endif

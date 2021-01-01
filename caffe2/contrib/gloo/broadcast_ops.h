@@ -58,7 +58,7 @@ class BroadcastOp final : public Operator<Context> {
     // Store which inputs/outputs this instance initialized with
     update(init_);
 
-    // Verify inputs == ouputs
+    // Verify inputs == outputs
     CAFFE_ENFORCE_EQ(init_.inputs.size(), init_.outputs.size());
     for (auto i = 0; i < init_.inputs.size(); i++) {
       CAFFE_ENFORCE_EQ(init_.inputs[i], init_.outputs[i]);
@@ -71,9 +71,9 @@ class BroadcastOp final : public Operator<Context> {
     }
 
     // Verify tensors all have same size
-    TypeMeta meta = Input(1).meta();
+    TypeMeta meta = Input(1).dtype();
     for (auto i = 2; i < InputSize(); i++) {
-      CAFFE_ENFORCE(Input(i).meta() == meta);
+      CAFFE_ENFORCE(Input(i).dtype() == meta);
     }
 
     // Finally initialize the algorithm
@@ -99,7 +99,7 @@ class BroadcastOp final : public Operator<Context> {
       params.outputs[i] = Output(i)->raw_mutable_data();
     }
     params.size = Output(0)->numel();
-    params.meta = Output(0)->meta();
+    params.meta = Output(0)->dtype();
   }
 
   GlooParameters init_;

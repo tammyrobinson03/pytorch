@@ -15,10 +15,8 @@ namespace int8 {
 
 class Int8FCOp final : public Operator<CPUContext> {
  public:
-  Int8FCOp(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<CPUContext>(operator_def, ws),
-        ws_(ws),
-        gemm_context_(ws->GetThreadPool()) {
+  explicit Int8FCOp(const OperatorDef& operator_def, Workspace* ws)
+      : Operator<CPUContext>(operator_def, ws), ws_(ws) {
     createSharedBuffer<CPUContext>(ws_);
   }
 
@@ -40,17 +38,17 @@ class Int8FCOp final : public Operator<CPUContext> {
     Y->zero_point = Y_offset;
     // (NxHxW)xC == MxK x (NxK) -> MxN
     const auto K = X.t.size_from_dim(1);
-    const auto N = W.t.dim(0);
-    CHECK_EQ(K, W.t.dim(1));
+    const auto N = W.t.size(0);
+    CHECK_EQ(K, W.t.size(1));
     CHECK_EQ(N, B.t.numel());
     const auto M = X.t.numel() / K;
-    Y->t.Resize(M, N);
+    ReinitializeTensor(&Y->t, {M, N}, at::dtype<uint8_t>().device(CPU));
 
     runWithSharedBuffer<CPUContext>(ws_, [&](Tensor* buffer) {
       initQNNPACK();
 
       pthreadpool_t threadpool =
-          reinterpret_cast<pthreadpool_t>(gemm_context_.threadPool());
+          reinterpret_cast<pthreadpool_t>(ws_->GetThreadPool());
 
       if (this->qnnpackObject_ == nullptr) {
         const qnnp_status createStatus = qnnp_create_fully_connected_nc_q8(
@@ -60,12 +58,19 @@ class Int8FCOp final : public Operator<CPUContext> {
             X.scale,
             W.zero_point,
             W.scale,
+#ifndef _MSC_VER
             W.t.template data<uint8_t>(),
             B.t.template data<int32_t>(),
+#else
+            W.t.data<uint8_t>(),
+            B.t.data<int32_t>(),
+#endif
+
             Y->zero_point,
             Y->scale,
             std::numeric_limits<uint8_t>::min(),
             std::numeric_limits<uint8_t>::max(),
+            0 /* flags */,
             &this->qnnpackObject_);
         CAFFE_ENFORCE(
             createStatus == qnnp_status_success,
@@ -89,8 +94,7 @@ class Int8FCOp final : public Operator<CPUContext> {
             inputPtr,
             K /* input stride */,
             Y->t.template mutable_data<uint8_t>(),
-            N /* output stride */,
-            nullptr /* threadpool */);
+            N /* output stride */);
         CAFFE_ENFORCE(
             setupStatus == qnnp_status_success,
             "failed to setup QNNPACK fully connected operator");
@@ -100,7 +104,7 @@ class Int8FCOp final : public Operator<CPUContext> {
         lastOutputPointer_ = Y->t.template mutable_data<uint8_t>();
       }
 
-#ifdef FBCODE_CAFFE2
+#if defined(FBCODE_CAFFE2) || !defined(USE_INTERNAL_PTHREADPOOL_IMPL)
       const qnnp_status runStatus =
           qnnp_run_operator(this->qnnpackObject_, nullptr /* thread pool */);
 #else
@@ -115,7 +119,6 @@ class Int8FCOp final : public Operator<CPUContext> {
 
  private:
   Workspace* ws_;
-  C2GEMMContext gemm_context_;
   // QNNPACK convolution object
   qnnp_operator_t qnnpackObject_{nullptr};
   // batch size in the previous call to RunOnDeviceWithOrderNHWC

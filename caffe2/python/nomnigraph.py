@@ -1,14 +1,12 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+
+
+import errno
+import os
+from subprocess import PIPE, Popen
 
 import caffe2.python._import_c_extension as C
-from caffe2.python import core
 from caffe2.proto import caffe2_pb2
-import os
-from subprocess import Popen, PIPE
-import errno
+from caffe2.python import core
 
 
 class NNModule(object):
@@ -25,8 +23,9 @@ class NNModule(object):
                 serialized_device_map = {}
                 for k in device_map:
                     serialized_device_map[k] = device_map[k].SerializeToString()
-                self._NNModule = C.NNModuleFromProtobufDistributed(serialized_proto,
-                        serialized_device_map)
+                self._NNModule = C.NNModuleFromProtobufDistributed(
+                    serialized_proto, serialized_device_map
+                )
             # Default
             elif serialized_proto:
                 self._NNModule, self._OpList = C.NNModuleFromProtobuf(serialized_proto)
@@ -90,6 +89,9 @@ class NNModule(object):
     def deleteSubgraph(self, subgraph):
         self._NNModule.deleteSubgraph(subgraph)
 
+    def createUniqueDataNode(self, prefix="_unique"):
+        return self._NNModule.createUniqueDataNode(prefix)
+
     def convertToCaffe2Proto(self, old_proto=None):
         if not old_proto:
             old_proto = caffe2_pb2.NetDef()
@@ -109,7 +111,7 @@ def render(s):
     s = str(s)
     cmd_exists = lambda x: any(
         os.access(os.path.join(path, x), os.X_OK)
-        for path in os.environ["PATH"].split(os.pathsep)
+        for path in os.getenv("PATH", "").split(os.pathsep)
     )
     if cmd_exists("graph-easy"):
         p = Popen("graph-easy", stdin=PIPE)

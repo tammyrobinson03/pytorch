@@ -1,8 +1,11 @@
 #pragma once
 
-#include <ATen/ScalarType.h>
+#include <c10/core/Backend.h>
+#include <c10/core/ScalarType.h>
 #include <c10/util/Exception.h>
+
 #include <type_traits>
+#include <atomic>
 
 // Implements instruction set specific function dispatch.
 //
@@ -30,6 +33,9 @@
 //
 // To call:
 //   stub(kCPU, tensor);
+//
+// TODO: CPU instruction set selection should be folded into whatever
+// the main dispatch mechanism is.
 
 // ignore warnings about DispatchStub::DEFAULT, AVX, AVX2 defined elsewhere
 #if defined(__clang__)
@@ -41,30 +47,45 @@ namespace at { namespace native {
 
 enum class CPUCapability {
   DEFAULT = 0,
+#ifdef HAVE_VSX_CPU_DEFINITION
+  VSX = 1,
+#else
   AVX = 1,
   AVX2 = 2,
+#endif
   NUM_OPTIONS
 };
 
 CPUCapability get_cpu_capability();
 
 template <typename FnPtr, typename T>
-struct CAFFE2_API DispatchStub;
+struct TORCH_API DispatchStub;
 
 template <typename rT, typename T, typename... Args>
-struct CAFFE2_API DispatchStub<rT (*)(Args...), T> {
+struct TORCH_API DispatchStub<rT (*)(Args...), T> {
   using FnPtr = rT (*) (Args...);
+
+  DispatchStub() = default;
+  DispatchStub(const DispatchStub&) = delete;
+  DispatchStub& operator=(const DispatchStub&) = delete;
 
   template <typename... ArgTypes>
   rT operator()(DeviceType device_type, ArgTypes&&... args) {
     if (device_type == DeviceType::CPU) {
-      if (!cpu_dispatch_ptr) {
-        cpu_dispatch_ptr = choose_cpu_impl();
+      // Use memory_order_relaxed here since even if two threads race,
+      // they will still compute the same value for cpu_dispatch_ptr.
+      auto fptr = cpu_dispatch_ptr.load(std::memory_order_relaxed);
+      if (!fptr) {
+        fptr = choose_cpu_impl();
+        cpu_dispatch_ptr.store(fptr, std::memory_order_relaxed);
       }
-      return (*cpu_dispatch_ptr)(std::forward<ArgTypes>(args)...);
+      return (*fptr)(std::forward<ArgTypes>(args)...);
     } else if (device_type == DeviceType::CUDA) {
       AT_ASSERTM(cuda_dispatch_ptr, "DispatchStub: missing CUDA kernel");
       return (*cuda_dispatch_ptr)(std::forward<ArgTypes>(args)...);
+    } else if (device_type == DeviceType::HIP) {
+      AT_ASSERTM(hip_dispatch_ptr, "DispatchStub: missing HIP kernel");
+      return (*hip_dispatch_ptr)(std::forward<ArgTypes>(args)...);
     } else {
       AT_ERROR("DispatchStub: unsupported device type", device_type);
     }
@@ -85,12 +106,27 @@ struct CAFFE2_API DispatchStub<rT (*)(Args...), T> {
       return AVX;
     }
 #endif
+#ifdef HAVE_VSX_CPU_DEFINITION
+    if (capability >= static_cast<int>(CPUCapability::VSX)) {
+      AT_ASSERTM(VSX, "DispatchStub: missing VSX kernel");
+      return VSX;
+    }
+#endif
     AT_ASSERTM(DEFAULT, "DispatchStub: missing default kernel");
     return DEFAULT;
   }
 
-  FnPtr cpu_dispatch_ptr = nullptr;
+// Fixing dispatch error in Windows debug builds.
+// See https://github.com/pytorch/pytorch/issues/22681 for more details.
+#if defined(_MSC_VER) && defined(_DEBUG)
+  std::atomic<FnPtr> cpu_dispatch_ptr;
+  FnPtr cuda_dispatch_ptr;
+  FnPtr hip_dispatch_ptr;
+#else
+  std::atomic<FnPtr> cpu_dispatch_ptr{nullptr};
   FnPtr cuda_dispatch_ptr = nullptr;
+  FnPtr hip_dispatch_ptr = nullptr;
+#endif
   static FnPtr DEFAULT;
 #ifdef HAVE_AVX_CPU_DEFINITION
   static FnPtr AVX;
@@ -98,12 +134,23 @@ struct CAFFE2_API DispatchStub<rT (*)(Args...), T> {
 #ifdef HAVE_AVX2_CPU_DEFINITION
   static FnPtr AVX2;
 #endif
+#ifdef HAVE_VSX_CPU_DEFINITION
+  static FnPtr VSX;
+#endif
 };
 
 namespace {
 template <typename FnPtr, typename T>
-struct RegisterDispatch {
-  RegisterDispatch(DispatchStub<FnPtr, T>& stub, FnPtr value) {
+struct RegisterCUDADispatch {
+  RegisterCUDADispatch(DispatchStub<FnPtr, T>& stub, FnPtr value) {
+    stub.cuda_dispatch_ptr = value;
+  }
+};
+
+template <typename FnPtr, typename T>
+struct RegisterHIPDispatch {
+  RegisterHIPDispatch(DispatchStub<FnPtr, T>& stub, FnPtr value) {
+    // TODO: make this point at hip_dispatch_ptr
     stub.cuda_dispatch_ptr = value;
   }
 };
@@ -115,8 +162,12 @@ struct RegisterDispatch {
 // not work with MSVC. So do a `using`-declaration if you need to pass in such
 // `fn`, e.g., grid_sampler_2d_backward_cpu_kernel in GridSampleKernel.h.
 #define DECLARE_DISPATCH(fn, name)         \
-  struct name : DispatchStub<fn, name> {}; \
-  extern CAFFE2_API struct name name
+  struct name : DispatchStub<fn, name> {   \
+    name() = default;                      \
+    name(const name&) = delete;            \
+    name& operator=(const name&) = delete; \
+  };                                       \
+  extern TORCH_API struct name name
 
 #define DEFINE_DISPATCH(name) struct name name
 
@@ -135,16 +186,33 @@ struct RegisterDispatch {
 #define REGISTER_AVX2_DISPATCH(name, fn)
 #endif
 
+#ifdef HAVE_VSX_CPU_DEFINITION
+#define REGISTER_VSX_DISPATCH(name, fn) REGISTER_ARCH_DISPATCH(name, VSX, fn)
+#else
+#define REGISTER_VSX_DISPATCH(name, fn)
+#endif
+
 #define REGISTER_NO_CPU_DISPATCH(name, fn_type)                                \
   REGISTER_ARCH_DISPATCH(name, DEFAULT, static_cast<fn_type>(nullptr))         \
   REGISTER_AVX_DISPATCH(name, static_cast<fn_type>(nullptr))                   \
-  REGISTER_AVX2_DISPATCH(name, static_cast<fn_type>(nullptr))
+  REGISTER_AVX2_DISPATCH(name, static_cast<fn_type>(nullptr))          \
+  REGISTER_VSX_DISPATCH(name, static_cast<fn_type>(nullptr))
 
 #define REGISTER_CUDA_DISPATCH(name, fn) \
-  static RegisterDispatch<decltype(fn), struct name> name ## __register(name, fn);
+  static RegisterCUDADispatch<decltype(fn), struct name> name ## __register(name, fn);
 
+#define REGISTER_HIP_DISPATCH(name, fn) \
+  static RegisterHIPDispatch<decltype(fn), struct name> name ## __register(name, fn);
+
+// NB: This macro must be used in an actual 'cu' file; if you try using
+// it from a 'cpp' file it will not work!
 #if defined(__CUDACC__)
 #define REGISTER_DISPATCH(name, fn) REGISTER_CUDA_DISPATCH(name, fn)
+#elif defined(__HIPCC__)
+// TODO: cut this over to HIP dispatch once we stop pretending that CUDA
+// is HIP in the PyTorch HIPify build.
+#define REGISTER_DISPATCH(name, fn) REGISTER_CUDA_DISPATCH(name, fn)
+// #define REGISTER_DISPATCH(name, fn) REGISTER_HIP_DISPATCH(name, fn)
 #elif defined(CPU_CAPABILITY)
 #define REGISTER_DISPATCH(name, fn) REGISTER_ARCH_DISPATCH(name, CPU_CAPABILITY, fn)
 #endif

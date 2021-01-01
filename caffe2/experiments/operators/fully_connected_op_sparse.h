@@ -106,18 +106,18 @@ class FullyConnectedOp_SPARSE final : public Operator<Context> {
     const auto& jw = Input(3);
     // Notice that we do not need to transpose b
     const auto& b = Input(4);
-    auto* Yt = Output(0); // transposed Y
+    // transposed Y
     // here we assume X is k-by-m
-    CAFFE_ENFORCE_EQ(Xt.ndim(), 2);
-    CAFFE_ENFORCE_EQ(b.ndim(), 1);
+    CAFFE_ENFORCE_EQ(Xt.dim(), 2);
+    CAFFE_ENFORCE_EQ(b.dim(), 1);
     // batch size
-    int K = Xt.ndim() > 1 ? Xt.dim32(0) : 1;
+    int K = Xt.dim() > 1 ? Xt.dim32(0) : 1;
     // Feature dimension
     int M = Xt.numel() / K;
     // number of outputs.
     int N = iw.dim32(0)-1;
     CAFFE_ENFORCE_EQ(N, b.dim32(0));
-    Yt->Resize(shape(N, M));
+    auto* Yt = Output(0, shape(N, M), at::dtype<T>());
 
     // Y' = W * X';
     Sparse_mm<T, Context>(

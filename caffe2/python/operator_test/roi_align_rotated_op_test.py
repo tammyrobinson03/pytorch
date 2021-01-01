@@ -1,7 +1,7 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+
+
+
+
 
 from caffe2.proto import caffe2_pb2
 from caffe2.python import core, workspace
@@ -77,7 +77,7 @@ class RoIAlignRotatedOp(hu.HypothesisTestCase):
         self.assertReferenceChecks(
             device_option=gc, op=op, inputs=[X, R], reference=roialign_ref
         )
-        if gc.device_type == caffe2_pb2.CUDA:
+        if core.IsGPUDeviceType(gc.device_type):
             self.assertGradientChecks(gc, op, [X, R], 0, [0])
 
     @given(
@@ -202,5 +202,10 @@ class RoIAlignRotatedOp(hu.HypothesisTestCase):
         self.assertReferenceChecks(
             device_option=gc, op=op, inputs=[X, R], reference=roialign_ref
         )
-        if gc.device_type == caffe2_pb2.CUDA:
+        if core.IsGPUDeviceType(gc.device_type):
             self.assertGradientChecks(gc, op, [X, R], 0, [0])
+
+
+if __name__ == '__main__':
+    import unittest
+    unittest.main()

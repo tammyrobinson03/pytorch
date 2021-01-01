@@ -3,6 +3,7 @@ from torch.distributions import constraints
 from torch.distributions.distribution import Distribution
 from torch.distributions.transforms import Transform
 from torch.distributions.utils import _sum_rightmost
+from typing import Dict
 
 
 class TransformedDistribution(Distribution):
@@ -38,7 +39,7 @@ class TransformedDistribution(Distribution):
     :class:`~torch.distributions.relaxed_bernoulli.RelaxedBernoulli` and
     :class:`~torch.distributions.relaxed_categorical.RelaxedOneHotCategorical`
     """
-    arg_constraints = {}
+    arg_constraints: Dict[str, constraints.Constraint] = {}
 
     def __init__(self, base_distribution, transforms, validate_args=None):
         self.base_dist = base_distribution
@@ -125,7 +126,7 @@ class TransformedDistribution(Distribution):
         sign = 1
         for transform in self.transforms:
             sign = sign * transform.sign
-        if sign is 1:
+        if isinstance(sign, int) and sign == 1:
             return value
         return sign * (value - 0.5) + 0.5
 

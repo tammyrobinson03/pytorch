@@ -2,6 +2,7 @@ import torch
 import warnings
 from torch.distributions import constraints
 from torch.distributions.utils import lazy_property
+from typing import Dict, Optional, Any
 
 
 class Distribution(object):
@@ -12,8 +13,6 @@ class Distribution(object):
     has_rsample = False
     has_enumerate_support = False
     _validate_args = False
-    support = None
-    arg_constraints = {}
 
     @staticmethod
     def set_default_validate_args(value):
@@ -34,6 +33,7 @@ class Distribution(object):
                     continue  # skip checking lazily-constructed args
                 if not constraint.check(getattr(self, param)).all():
                     raise ValueError("The parameter {} has invalid values".format(param))
+        super(Distribution, self).__init__()
 
     def expand(self, batch_shape, _instance=None):
         """
@@ -71,7 +71,7 @@ class Distribution(object):
         return self._event_shape
 
     @property
-    def arg_constraints(self):
+    def arg_constraints(self) -> Dict[str, constraints.Constraint]:
         """
         Returns a dictionary from argument names to
         :class:`~torch.distributions.constraints.Constraint` objects that
@@ -81,7 +81,7 @@ class Distribution(object):
         raise NotImplementedError
 
     @property
-    def support(self):
+    def support(self) -> Optional[Any]:
         """
         Returns a :class:`~torch.distributions.constraints.Constraint` object
         representing this distribution's support.
@@ -247,7 +247,7 @@ class Distribution(object):
             if i != 1 and j != 1 and i != j:
                 raise ValueError('Value is not broadcastable with batch_shape+event_shape: {} vs {}.'.
                                  format(actual_shape, expected_shape))
-
+        assert self.support is not None
         if not self.support.check(value).all():
             raise ValueError('The value argument must be within the support')
 
@@ -261,6 +261,6 @@ class Distribution(object):
     def __repr__(self):
         param_names = [k for k, _ in self.arg_constraints.items() if k in self.__dict__]
         args_string = ', '.join(['{}: {}'.format(p, self.__dict__[p]
-                                if self.__dict__[p].dim() == 0
+                                if self.__dict__[p].numel() == 1
                                 else self.__dict__[p].size()) for p in param_names])
         return self.__class__.__name__ + '(' + args_string + ')'

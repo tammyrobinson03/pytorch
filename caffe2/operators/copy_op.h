@@ -2,7 +2,11 @@
 #define CAFFE2_OPERATORS_COPY_OP_H_
 
 #include "caffe2/core/context.h"
+#include "caffe2/core/export_caffe2_op_to_c10.h"
 #include "caffe2/core/operator.h"
+
+C10_DECLARE_EXPORT_CAFFE2_OP_TO_C10(CopyGPUToCPU)
+C10_DECLARE_EXPORT_CAFFE2_OP_TO_C10(CopyCPUToGPU)
 
 namespace caffe2 {
 
@@ -18,10 +22,10 @@ class CopyOp : public Operator<Context> {
         this->template Output<Tensor>(0, DstContext::GetDeviceType());
     output->ResizeLike(input);
     this->context_.template CopyItems<SrcContext, DstContext>(
-        input.meta(),
+        input.dtype(),
         input.numel(),
         input.raw_data(),
-        output->raw_mutable_data(input.meta()));
+        output->raw_mutable_data(input.dtype()));
     return true;
   }
 };
@@ -29,8 +33,9 @@ class CopyOp : public Operator<Context> {
 template <class Context, class DstContext, class SrcContext>
 class CopyOnDeviceLikeOp : public CopyOp<Context, DstContext, SrcContext> {
  public:
-  CopyOnDeviceLikeOp(const OperatorDef& operator_def, Workspace* ws)
-      : CopyOp<Context, DstContext, SrcContext>(operator_def, ws) {}
+  template <class... Args>
+  explicit CopyOnDeviceLikeOp(Args&&... args)
+      : CopyOp<Context, DstContext, SrcContext>(std::forward<Args>(args)...) {}
 };
 
 } // namespace caffe2

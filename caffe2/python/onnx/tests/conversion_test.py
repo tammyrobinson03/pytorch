@@ -1,9 +1,9 @@
 ## @package onnx
 # Module caffe2.python.onnx.tests.conversion_test
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+
+
+
 
 import json
 import tempfile
@@ -55,7 +55,7 @@ class TestConversion(TestCase):
         caffe2_init_net.write(init_model.net.Proto().SerializeToString())
         caffe2_init_net.flush()
 
-        result = self._run_command(
+        self._run_command(
             caffe2_to_onnx, [
                 caffe2_net.name,
                 '--caffe2-init-net', caffe2_init_net.name,
@@ -81,16 +81,16 @@ class TestConversion(TestCase):
         caffe2_net.flush()
 
         args = [caffe2_net.name, '--output', output.name]
-        self.assertRaisesRegexp(Exception,
-                                'value info',
-                                self._run_command, caffe2_to_onnx, args)
+        self.assertRaisesRegex(Exception,
+                               'value info',
+                               self._run_command, caffe2_to_onnx, args)
 
         args.extend([
             '--value-info',
             json.dumps({
                 'X': (TensorProto.FLOAT, (2, 2)),
             })])
-        result = self._run_command(caffe2_to_onnx, args)
+        self._run_command(caffe2_to_onnx, args)
 
         onnx_model = ModelProto()
         onnx_model.ParseFromString(output.read())
@@ -109,17 +109,17 @@ class TestConversion(TestCase):
             [node_def],
             "test",
             [helper.make_tensor_value_info("X", TensorProto.FLOAT, (2, 3)),
-             helper.make_tensor_value_info("W", TensorProto.FLOAT, (3, 2))],
-            [helper.make_tensor_value_info("Y", TensorProto.FLOAT, (2, 2))],
+             helper.make_tensor_value_info("W", TensorProto.FLOAT, (1, 3))],
+            [helper.make_tensor_value_info("Y", TensorProto.FLOAT, (2, 3))],
             initializer=[helper.make_tensor("W",
                                             TensorProto.FLOAT,
-                                            [3, 2],
-                                            np.zeros((3, 2)).flatten().astype(float))])
+                                            [1, 3],
+                                            np.zeros((1, 3)).flatten().astype(float))])
         model_def = helper.make_model(graph_def, producer_name='onnx-to-caffe2-test')
         onnx_model.write(model_def.SerializeToString())
         onnx_model.flush()
 
-        result = self._run_command(
+        self._run_command(
             onnx_to_caffe2, [
                 onnx_model.name,
                 '--output', output.name,
@@ -138,12 +138,9 @@ class TestConversion(TestCase):
                                   for init_op in caffe2_init_net.op], [])),
                          {'W'})
 
-
     def test_onnx_to_caffe2_zipfile(self):
         buf = tempfile.NamedTemporaryFile()
         onnx_model = zipfile.ZipFile(buf, 'w')
-        output = tempfile.NamedTemporaryFile()
-        init_net_output = tempfile.NamedTemporaryFile()
 
         node_def = helper.make_node(
             "MatMul", ["X", "W"], ["Y"])
@@ -158,7 +155,7 @@ class TestConversion(TestCase):
             initializer=[helper.make_tensor("W",
                                             TensorProto.FLOAT,
                                             [3, 2],
-                                            b'__EXTERNAL',
+                                            W.tobytes(),
                                             raw=True)])
         model_def = helper.make_model(graph_def, producer_name='onnx-to-caffe2-test')
         onnx_model.writestr('__MODEL_PROTO', model_def.SerializeToString())
@@ -192,7 +189,8 @@ class TestConversion(TestCase):
     def test_onnx_to_caffe2_if(self):
         true_nodes = [helper.make_node(
             "MatMul", ["X", "W"], ["Y"])]
-        false_nodes = [helper.make_node("Slice", ["X"], ["Y"], axes=[0, 1], starts=[0, 0], ends=[0, 2])]
+        false_nodes = [helper.make_node("Slice", ["X"], ["Y"], axes=[0, 1],
+                                        starts=[0, 0], ends=[2, 2])]
         nodes = self._make_fake_if_op(true_nodes, false_nodes, [(TensorProto.FLOAT, (2, 2), "Y")])
         X = np.random.rand(2, 3).astype(np.float32)
         W = np.random.rand(3, 2).flatten().astype(np.float32)
@@ -207,7 +205,9 @@ class TestConversion(TestCase):
                                             [3, 2],
                                             W.tolist())]
         )
-        model_def = helper.make_model(graph_def, producer_name='onnx-to-caffe2-test')
+        onnx_id = helper.make_opsetid("", 9)
+        model_def = helper.make_model(graph_def, producer_name='onnx-to-caffe2-test',
+                                      opset_imports=[onnx_id])
 
         p = c2.prepare(model_def)
         Y = np.matmul(X, W.reshape(3, 2))
@@ -221,11 +221,11 @@ class TestConversion(TestCase):
         # lcd is a dummy loop-carried dependency that only exists because
         # right now the schema checker is broken and assumes a variadic
         # input needs at least one value.
-        graph_inputs = [helper.make_tensor_value_info("i", TensorProto.INT32, ()),
-                        helper.make_tensor_value_info("cond", TensorProto.BOOL, ())]
+        graph_inputs = [helper.make_tensor_value_info("i", TensorProto.INT64, (1,)),
+                        helper.make_tensor_value_info("cond", TensorProto.BOOL, (1,))]
         for type, shape, name in input_types:
             graph_inputs.append(helper.make_tensor_value_info("_" + name, type, shape))
-        graph_outputs = [helper.make_tensor_value_info("cond", TensorProto.BOOL, ())]
+        graph_outputs = [helper.make_tensor_value_info("cond", TensorProto.BOOL, (1,))]
         for type, shape, name in output_types:
             graph_outputs.append(helper.make_tensor_value_info("_" + name, type, shape))
         body_graph = helper.make_graph(body_nodes, "body_graph", graph_inputs,

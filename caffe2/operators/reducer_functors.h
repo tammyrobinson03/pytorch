@@ -314,9 +314,9 @@ struct MaxRangeReducerDef {
       "elements in the input slices. Operation doesn't change the shape of "
       "individual blocks. This implementation imitates torch nn.Max operator. "
       "If the maximum value occurs more than once, the operator will return "
-      "the first occurence of value. When computing the gradient using the "
+      "the first occurrence of value. When computing the gradient using the "
       "backward propagation, the gradient input corresponding to the first "
-      "occurence of the maximum value will be used.";
+      "occurrence of the maximum value will be used.";
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -335,7 +335,7 @@ class BaseReducer {
 
     explicit Meta(bool first = true) : first_dim(first) {}
 
-    void computeMeta(at::IntList dims, int skip_dims) {
+    void computeMeta(at::IntArrayRef dims, size_t skip_dims) {
       first_dim ? block_shape.assign(dims.begin() + skip_dims, dims.end())
                 : block_shape.assign(dims.begin(), dims.end() - skip_dims);
       block_size = first_dim ? size_from_dim_(skip_dims, dims)
@@ -400,7 +400,7 @@ class BaseReducerGradient {
                 : block_shape.assign(dims.begin(), dims.end() - skip_dims);
       block_size = first_dim
           ? out_grad.size_from_dim(skip_dims)
-          : out_grad.size_from_dim(out_grad.ndim() - skip_dims);
+          : out_grad.size_from_dim(out_grad.dim() - skip_dims);
     }
 
     void observeOriginalInput(
@@ -520,7 +520,7 @@ class WeightedSumReducer<T, CPUContext> : public BaseReducer {
     void observeInput(int input, const Tensor& value, int skip_dims) {
       if (input == 1) {
         CAFFE_ENFORCE_EQ(
-            skip_dims, value.ndim(), "SCALARS mustn't have extra dimensions");
+            skip_dims, value.dim(), "SCALARS mustn't have extra dimensions");
         scalars = value.data<T>();
         return;
       }

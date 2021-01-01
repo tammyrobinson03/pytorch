@@ -34,17 +34,6 @@ TensorDescriptors<T>::~TensorDescriptors() {
 }
 
 template <typename T>
-RecurrentBaseOp<T>::RecurrentBaseOp(
-    const OperatorDef& operator_def,
-    Workspace* ws)
-    : Operator<CUDAContext>(operator_def, ws), cudnn_wrapper_(&context_) {
-  CUDNN_ENFORCE(cudnnCreateDropoutDescriptor(&dropoutDesc_));
-  CUDNN_ENFORCE(cudnnCreateRNNDescriptor(&rnnDesc_));
-  CUDNN_ENFORCE(cudnnCreateFilterDescriptor(&wDesc_));
-  CUDNN_ENFORCE(cudnnCreateTensorDescriptor(&hxDesc_));
-}
-
-template <typename T>
 RecurrentBaseOp<T>::~RecurrentBaseOp() {
   CUDNN_ENFORCE(cudnnDestroyDropoutDescriptor(dropoutDesc_));
   CUDNN_ENFORCE(cudnnDestroyRNNDescriptor(rnnDesc_));
@@ -60,10 +49,10 @@ void RecurrentBaseOp<T>::initialize(
     Tensor* hiddenOutput,
     Tensor* cellOutput) {
   static_assert(sizeof(T) == 4, ""); // workaround clang bug
-  CAFFE_ENFORCE_GE(input.ndim(), 3);
-  const int seqLength = input.dim(0);
-  const int batchSize = input.dim(1);
-  const int inputDim = input.dim(2);
+  CAFFE_ENFORCE_GE(input.dim(), 3);
+  const int seqLength = input.size(0);
+  const int batchSize = input.size(1);
+  const int inputDim = input.size(2);
   const int hiddenSize = OperatorBase::GetSingleArgument<int>("hidden_size", 0);
   CAFFE_ENFORCE_GT(hiddenSize, 0);
   const auto bidirectional =
@@ -110,7 +99,7 @@ void RecurrentBaseOp<T>::initialize(
   // RNN setup
   {
 #if CUDNN_VERSION_MIN(7, 0, 0)
-    CUDNN_ENFORCE(cudnnSetRNNDescriptor(
+    CUDNN_ENFORCE(cudnnSetRNNDescriptor_v6(
         cudnn_wrapper_.inline_cudnn_handle(),
         rnnDesc_,
         hiddenSize,

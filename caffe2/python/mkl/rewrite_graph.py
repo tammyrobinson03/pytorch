@@ -1,7 +1,7 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+
+
+
+
 
 import copy
 from caffe2.proto import caffe2_pb2
@@ -78,9 +78,9 @@ def rewrite_run_net_simple(net):
             core.DeviceOption(device_type=device))
         op.engine = ""
 
-    # Temporarily disbale conv+relu fusion until we verify further
+    # Temporarily disable conv+relu fusion until we verify further
     # net.ParseFromString(
-    #     C.transform_optimizeForIDEEP(net.SerializeToString()))
+    #     C.transform_optimizeForMKLDNN(net.SerializeToString()))
     fix_BoxWithNMSLimit(net)
 
 
@@ -202,9 +202,9 @@ def rewrite_run_net_simple_xrayocr_lstm(net):
                             else cpu_tmp(blob))
                     arg.n.external_input[:] = new_external_input
 
-    # Temporarily disbale conv+relu fusion until we verify further
+    # Temporarily disable conv+relu fusion until we verify further
     # net.ParseFromString(
-    #     C.transform_optimizeForIDEEP(net.SerializeToString()))
+    #     C.transform_optimizeForMKLDNN(net.SerializeToString()))
     fix_BoxWithNMSLimit(net)
 
 

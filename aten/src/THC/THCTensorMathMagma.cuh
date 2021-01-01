@@ -3,8 +3,6 @@
 
 #ifdef USE_MAGMA
 #include <magma.h>
-#else
-#include "THCBlas.h"
 #endif
 
 #ifdef USE_MAGMA

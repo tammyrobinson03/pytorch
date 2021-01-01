@@ -10,7 +10,7 @@ from torch.distributions.transformed_distribution import TransformedDistribution
 
 class HalfCauchy(TransformedDistribution):
     r"""
-    Creates a half-normal distribution parameterized by `scale` where::
+    Creates a half-Cauchy distribution parameterized by `scale` where::
 
         X ~ Cauchy(0, scale)
         Y = |X| ~ HalfCauchy(scale)
@@ -50,6 +50,8 @@ class HalfCauchy(TransformedDistribution):
         return self.base_dist.variance
 
     def log_prob(self, value):
+        value = torch.as_tensor(value, dtype=self.base_dist.scale.dtype,
+                                device=self.base_dist.scale.device)
         log_prob = self.base_dist.log_prob(value) + math.log(2)
         log_prob[value.expand(log_prob.shape) < 0] = -inf
         return log_prob

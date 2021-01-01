@@ -2,6 +2,8 @@ import time
 from collections import defaultdict
 from functools import partial
 
+import torch
+
 
 # Unfortunately it doesn't seem as if there was any way to get TensorBoard to do
 # anything without having TF installed, and so this file has a hard dependency on it
@@ -12,7 +14,7 @@ try:
     from tensorflow.python.summary.writer.writer import FileWriter
 except ImportError:
     raise ImportError("TensorBoard visualization of GraphExecutors requires having "
-                      "TensorFlow installed")
+                      "TensorFlow installed") from None
 
 
 def dump_tensorboard_summary(graph_executor, logdir):
@@ -27,7 +29,7 @@ def visualize(graph, name_prefix='', pb_graph=None, executors_it=None):
     value_map = {}
     pb_graph = pb_graph or graph_pb2.GraphDef()
 
-    if isinstance(graph, (torch._C.GraphExecutor, torch._C.GraphExecutorState)):
+    if isinstance(graph, torch._C.GraphExecutorState):
         visualize_graph_executor(graph, name_prefix, pb_graph,
                                  partial(visualize, pb_graph=pb_graph))
         return pb_graph
@@ -50,7 +52,7 @@ def visualize(graph, name_prefix='', pb_graph=None, executors_it=None):
 def visualize_graph_executor(state, name_prefix, pb_graph, inline_graph):
     """Appends the state of a given GraphExecutor to the graph protobuf.
 
-    Arguments:
+    Args:
         state (GraphExecutor or GraphExecutorState): GraphExecutor to display.
         name_prefix (str): Name prefix of the containing subgraph.
         pb_graph (GraphDef): graph to append to.
@@ -65,9 +67,6 @@ def visualize_graph_executor(state, name_prefix, pb_graph, inline_graph):
     The strategy is to embed all different configurations as independent subgraphs,
     while inlining the original graph as the one that actually produces the values.
     """
-    if isinstance(state, torch._C.GraphExecutor):
-        state = state.get_debug_state()
-
     if state.autograd_fallback_graph is not None:
         visualize(graph=state.autograd_fallback_graph,
                   name_prefix=name_prefix + 'autograd_fallback/',

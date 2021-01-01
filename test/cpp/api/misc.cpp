@@ -1,11 +1,50 @@
 #include <gtest/gtest.h>
 
-#include <torch/nn/init.h>
-#include <torch/nn/modules/linear.h>
-#include <torch/tensor.h>
-#include <torch/utils.h>
+#include <torch/torch.h>
 
 #include <test/cpp/api/support.h>
+
+#include <functional>
+
+using namespace torch::test;
+
+void torch_warn_once_A() {
+  TORCH_WARN_ONCE("warn once");
+}
+
+void torch_warn_once_B() {
+  TORCH_WARN_ONCE("warn something else once");
+}
+
+void torch_warn() {
+  TORCH_WARN("warn multiple times");
+}
+
+TEST(UtilsTest, WarnOnce) {
+  {
+    WarningCapture warnings;
+
+    torch_warn_once_A();
+    torch_warn_once_A();
+    torch_warn_once_B();
+    torch_warn_once_B();
+
+    ASSERT_EQ(count_substr_occurrences(warnings.str(), "warn once"), 1);
+    ASSERT_EQ(
+        count_substr_occurrences(warnings.str(), "warn something else once"),
+        1);
+  }
+  {
+    WarningCapture warnings;
+
+    torch_warn();
+    torch_warn();
+    torch_warn();
+
+    ASSERT_EQ(
+        count_substr_occurrences(warnings.str(), "warn multiple times"), 3);
+  }
+}
 
 TEST(NoGradTest, SetsGradModeCorrectly) {
   torch::manual_seed(0);
@@ -15,8 +54,9 @@ TEST(NoGradTest, SetsGradModeCorrectly) {
   auto y = model->forward(x);
   torch::Tensor s = y.sum();
 
-  s.backward();
-  ASSERT_FALSE(model->parameters()["weight"].grad().defined());
+  // Mimicking python API behavior:
+  ASSERT_THROWS_WITH(s.backward(),
+    "element 0 of tensors does not require grad and does not have a grad_fn")
 }
 
 struct AutogradTest : torch::test::SeedingFixture {
@@ -29,7 +69,7 @@ struct AutogradTest : torch::test::SeedingFixture {
 };
 
 TEST_F(AutogradTest, CanTakeDerivatives) {
-  z.backward();
+  z.backward(torch::ones_like(z));
   ASSERT_TRUE(x.grad().allclose(y));
 }
 
@@ -41,13 +81,4 @@ TEST_F(AutogradTest, CanTakeDerivativesOfZeroDimTensors) {
 TEST_F(AutogradTest, CanPassCustomGradientInputs) {
   z.sum().backward(torch::ones({}) * 2);
   ASSERT_TRUE(x.grad().allclose(y * 2));
-}
-
-TEST(NNInitTest, CanInitializeTensorThatRequiresGrad) {
-  auto tensor = torch::empty({3, 4}, torch::requires_grad());
-  ASSERT_THROWS_WITH(
-      tensor.fill_(1),
-      "a leaf Variable that requires grad "
-      "has been used in an in-place operation");
-  ASSERT_EQ(torch::nn::init::ones_(tensor).sum().item<int32_t>(), 12);
 }

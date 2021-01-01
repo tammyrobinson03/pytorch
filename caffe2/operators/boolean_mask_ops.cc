@@ -9,8 +9,9 @@ template <class Context>
 class BooleanMaskLengthsOp final : public Operator<Context> {
  public:
   USE_OPERATOR_CONTEXT_FUNCTIONS;
-  BooleanMaskLengthsOp(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<Context>(operator_def, ws) {}
+  template <class... Args>
+  explicit BooleanMaskLengthsOp(Args&&... args)
+      : Operator<Context>(std::forward<Args>(args)...) {}
 
   bool RunOnDevice() override {
     return DispatchHelper<TensorTypes<int32_t, int64_t>>::call(this, Input(0));
@@ -20,15 +21,15 @@ class BooleanMaskLengthsOp final : public Operator<Context> {
   bool DoRunWithType() {
     auto& lengths = Input(0);
     auto& mask = Input(1);
-    auto* lengthsOut = Output(0);
-    CAFFE_ENFORCE(lengths.ndim() == 1);
-    CAFFE_ENFORCE(mask.ndim() == 1);
+
+    CAFFE_ENFORCE(lengths.dim() == 1);
+    CAFFE_ENFORCE(mask.dim() == 1);
     const auto* lengthsPtr = lengths.template data<T>();
     const auto* maskPtr = mask.template data<bool>();
     auto totalLength =
         std::accumulate(lengthsPtr, lengthsPtr + lengths.numel(), 0);
     CAFFE_ENFORCE(mask.numel() == totalLength);
-    lengthsOut->ResizeLike(lengths);
+    auto* lengthsOut = Output(0, lengths.sizes(), at::dtype<T>());
     auto* lengthsOutPtr = lengthsOut->template mutable_data<T>();
     int p = 0;
     for (int i = 0; i < lengths.numel(); ++i) {
@@ -50,9 +51,9 @@ bool BooleanMaskOp<CPUContext>::RunOnDevice() {
   auto& data = Input(0);
   auto& mask = Input(1);
   auto* dataOut = Output(0);
-  CAFFE_ENFORCE(data.ndim() >= 1);
-  CAFFE_ENFORCE_EQ(mask.ndim(), 1);
-  CAFFE_ENFORCE(data.sizes()[0] == mask.sizes()[0]);
+  CAFFE_ENFORCE(data.dim() >= 1);
+  CAFFE_ENFORCE_EQ(mask.dim(), 1);
+  CAFFE_ENFORCE(data.size(0) == mask.size(0));
 
   const auto* maskPtr = mask.template data<bool>();
   int numOutputs = 0;
@@ -66,12 +67,11 @@ bool BooleanMaskOp<CPUContext>::RunOnDevice() {
   outShape.push_back(numOutputs);
   outShape.insert(outShape.end(), data.sizes().begin() + 1, data.sizes().end());
   dataOut->Resize(outShape);
-  auto* outPtr = (char*)dataOut->raw_mutable_data(data.meta());
+  auto* outPtr = (char*)dataOut->raw_mutable_data(data.dtype());
 
   int64_t* out_vec = nullptr;
   if (OutputSize() == 2) {
-    auto* indicesOut = Output(1);
-    indicesOut->Resize(numOutputs);
+    auto* indicesOut = Output(1, {numOutputs}, at::dtype<int64_t>());
     out_vec = indicesOut->template mutable_data<int64_t>();
   }
 
@@ -79,7 +79,7 @@ bool BooleanMaskOp<CPUContext>::RunOnDevice() {
     return true;
   }
   const auto innerSize = data.size_from_dim(1);
-  const auto innerSizeBytes = innerSize * data.meta().itemsize();
+  const auto innerSizeBytes = innerSize * data.dtype().itemsize();
 
   int64_t lastStart = -1;
   const auto* inPtr = (char*)data.raw_data();
@@ -91,7 +91,8 @@ bool BooleanMaskOp<CPUContext>::RunOnDevice() {
       const auto* src = inPtr + lastStart * innerSizeBytes;
       auto* dst = outPtr + outStart * innerSizeBytes;
       int numItems = i - lastStart;
-      context_.CopyItemsSameDevice(data.meta(), numItems * innerSize, src, dst);
+      context_.CopyItemsSameDevice(
+          data.dtype(), numItems * innerSize, src, dst);
       outStart += numItems;
       lastStart = -1;
     }
@@ -109,7 +110,35 @@ bool BooleanMaskOp<CPUContext>::RunOnDevice() {
   return true;
 }
 
+template <>
+template <class T>
+bool BooleanMaskOpGradient<CPUContext>::DoRunWithType() {
+  const auto& mask = Input(0);
+  const auto& dY = Input(1);
+  auto* dX = Output(0);
+
+  const int data_length_before_mask = mask.size(0);
+
+  dX->Resize(data_length_before_mask);
+
+  // TODO: we should support any type, not just float
+  T* dXdata = dX->template mutable_data<T>();
+  const T* dYdata = dY.template data<T>();
+  const bool* mask_data = mask.template data<bool>();
+
+  int ind = 0;
+
+  for (int i = 0; i < data_length_before_mask; i++) {
+    dXdata[i] = mask_data[i] ? dYdata[ind++] : 0;
+  }
+
+  return true;
+}
+
 REGISTER_CPU_OPERATOR(BooleanMask, BooleanMaskOp<CPUContext>);
+REGISTER_CPU_GRADIENT_OPERATOR(
+    BooleanMaskGradient,
+    BooleanMaskOpGradient<CPUContext>);
 REGISTER_CPU_OPERATOR(BooleanMaskLengths, BooleanMaskLengthsOp<CPUContext>);
 
 OPERATOR_SCHEMA(BooleanMask)
@@ -163,9 +192,18 @@ masked_indices: [0 3 4]
 
 )DOC")
     .Input(0, "data", "(*Tensor*): 1D input tensor")
-    .Input(1, "mask", "(*Tensor`<bool>`*): tensor of bools which determines the input elements that will be left in the `masked_data` output tensor; same shape as `data`")
-    .Output(0, "masked_data", "(*Tensor*): 1D tensor of same type as `data` input that contains the masked input tensor")
-    .Output(1, "masked_indices", "(*Tensor`<int>`*): 1D tensor of indices of the True elements in the `mask` tensor");
+    .Input(
+        1,
+        "mask",
+        "(*Tensor`<bool>`*): tensor of bools which determines the input elements that will be left in the `masked_data` output tensor; same shape as `data`")
+    .Output(
+        0,
+        "masked_data",
+        "(*Tensor*): 1D tensor of same type as `data` input that contains the masked input tensor")
+    .Output(
+        1,
+        "masked_indices",
+        "(*Tensor`<int>`*): 1D tensor of indices of the True elements in the `mask` tensor");
 
 OPERATOR_SCHEMA(BooleanMaskLengths)
     .NumInputs(2)
@@ -217,12 +255,34 @@ masked_lengths: [0 2 2]
 </details>
 
 )DOC")
-    .Input(0, "lengths", "(*Tensor`<int>`*): input tensor containing segment lengths")
+    .Input(
+        0,
+        "lengths",
+        "(*Tensor`<int>`*): input tensor containing segment lengths")
     .Input(1, "mask", "(*Tensor`<bool>`*): A 1D bool tensor of values to keep.")
-    .Output(0, "masked_lengths", "(*Tensor`<int>`*): 1D tensor of same type as inputs that contains the sequence");
+    .Output(
+        0,
+        "masked_lengths",
+        "(*Tensor`<int>`*): 1D tensor of same type as inputs that contains the sequence");
 
-NO_GRADIENT(BooleanMask)
+GRADIENT_OPERATOR_SCHEMA(BooleanMaskGradient).NumInputs(2).NumOutputs(1);
+
+namespace {
+class GetBooleanMaskGradient : public GradientMakerBase {
+  using GradientMakerBase::GradientMakerBase;
+  vector<OperatorDef> GetGradientDefs() override {
+    return SingleGradientDef(
+        "BooleanMaskGradient",
+        "",
+        vector<string>{I(1), GO(0)},
+        vector<string>{GI(0)});
+  }
+};
+
+REGISTER_GRADIENT(BooleanMask, GetBooleanMaskGradient);
 NO_GRADIENT(BooleanMaskLengths);
+
+} // namespace
 
 const float minf = -1.0f * std::numeric_limits<float>::infinity();
 
@@ -230,8 +290,8 @@ const float minf = -1.0f * std::numeric_limits<float>::infinity();
 // implementations at compile time and have a better chance of inlining
 template <typename Functor>
 void MaskWithFunctor(
-    size_t N,
-    size_t M,
+    int N,
+    int M,
     int B,
     const float* in,
     Functor fn,
@@ -272,8 +332,8 @@ void MaskWithFunctor(
 // Repeat masking along continuous segments (right axes) of size D
 template <typename Functor>
 void RepeatedMaskWithFunctor(
-    size_t N,
-    size_t M,
+    int N,
+    int M,
     int D,
     const float* in,
     Functor fn,
@@ -365,8 +425,7 @@ bool SequenceMaskOp<CPUContext>::DoRunWithType() {
     window_centers = &Input(1);
   }
 
-  auto* output = Output(0);
-  output->ResizeLike(*input);
+  auto* output = Output(0, input->sizes(), at::dtype<T>());
 
   const auto canonical_axis = input->canonical_axis_index(axis_);
 
@@ -392,7 +451,7 @@ bool SequenceMaskOp<CPUContext>::DoRunWithType() {
   // product of dims from 1 to batch
   const int batch_dim =
       (canonical_batch >= 0
-           ? input->size_to_dim(canonical_batch) * input->dim(canonical_batch)
+           ? input->size_to_dim(canonical_batch) * input->size(canonical_batch)
            : -1);
 
   T fill_val = convert::To<float, T>(grad_ ? 0.0f : fill_val_);

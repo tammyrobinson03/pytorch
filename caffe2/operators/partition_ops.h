@@ -18,8 +18,9 @@ class GatherByKeyOp : public Operator<CPUContext> {
  public:
   USE_DISPATCH_HELPER;
   USE_OPERATOR_FUNCTIONS(CPUContext);
-  GatherByKeyOp(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<CPUContext>(operator_def, ws) {}
+  template <class... Args>
+  explicit GatherByKeyOp(Args&&... args)
+      : Operator<CPUContext>(std::forward<Args>(args)...) {}
 
  private:
   bool RunOnDevice() override {
@@ -50,12 +51,12 @@ class GatherByKeyOp : public Operator<CPUContext> {
     for (int i = 2; i < InputSize(); ++i) {
       const auto& input = Input(i);
       CAFFE_ENFORCE(meta == input.dtype());
-      CAFFE_ENFORCE_GE(input.ndim(), 1);
+      CAFFE_ENFORCE_GE(input.dim(), 1);
       CAFFE_ENFORCE(std::equal(
           outShape.begin() + keysShape.size(),
           outShape.end(),
           input.sizes().begin() + 1));
-      totalSize += input.dim(0);
+      totalSize += input.size(0);
     }
     CAFFE_ENFORCE_EQ(keysTensor.numel(), totalSize);
 
@@ -105,8 +106,9 @@ class PartitionOpBase : public Operator<CPUContext> {
  public:
   USE_OPERATOR_FUNCTIONS(CPUContext);
 
-  PartitionOpBase(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<CPUContext>(operator_def, ws),
+  template <class... Args>
+  explicit PartitionOpBase(Args&&... args)
+      : Operator<CPUContext>(std::forward<Args>(args)...),
         OP_SINGLE_ARG(int, "pack_first_input", pack_first_input_, 0) {}
 
  protected:
@@ -138,15 +140,15 @@ class PartitionOpBase : public Operator<CPUContext> {
       auto& input = Input(i);
       if (i > mainInputIndex) {
         CAFFE_ENFORCE_GE(
-            input.ndim(),
-            main_input.ndim(),
+            input.dim(),
+            main_input.dim(),
             "Prefix of extra input's shape must match main input's shape, ",
             "input: ",
             i);
-        for (int j = 0; j < main_input.ndim(); ++j) {
+        for (int j = 0; j < main_input.dim(); ++j) {
           CAFFE_ENFORCE_GE(
-              input.dim(j),
-              main_input.dim(j),
+              input.size(j),
+              main_input.size(j),
               "Prefix of extra input's shape must match main input's shape, ",
               "input: ",
               i,
@@ -155,11 +157,11 @@ class PartitionOpBase : public Operator<CPUContext> {
         }
       }
       raw_datas_[i] = input.raw_data();
-      block_sizes_[i] = input.size_from_dim(main_input.ndim());
+      block_sizes_[i] = input.size_from_dim(main_input.dim());
       metas_[i] = input.dtype();
       // shape = partition_size + suffix of input dims
       vector<int64_t> shape(
-          input.sizes().begin() + main_input.ndim() - 1, input.sizes().end());
+          input.sizes().begin() + main_input.dim() - 1, input.sizes().end());
       for (int j = 0; j < partitions; ++j) {
         int out_idx = i + j * inputSize;
         auto output = Output(out_idx);
@@ -207,8 +209,9 @@ class PartitionOp : public PartitionOpBase {
  public:
   USE_DISPATCH_HELPER;
 
-  PartitionOp(const OperatorDef& operator_def, Workspace* ws)
-      : PartitionOpBase(operator_def, ws) {}
+  template <class... Args>
+  explicit PartitionOp(Args&&... args)
+      : PartitionOpBase(std::forward<Args>(args)...) {}
 
   bool RunOnDevice() override {
     return DispatchHelper<TensorTypes<int32_t, int64_t>>::call(this, Input(0));
@@ -228,8 +231,9 @@ class LengthsPartitionOp : public PartitionOpBase {
  public:
   USE_DISPATCH_HELPER;
 
-  LengthsPartitionOp(const OperatorDef& operator_def, Workspace* ws)
-      : PartitionOpBase(operator_def, ws) {}
+  template <class... Args>
+  explicit LengthsPartitionOp(Args&&... args)
+      : PartitionOpBase(std::forward<Args>(args)...) {}
 
   bool RunOnDevice() override {
     return DispatchHelper<TensorTypes<int32_t, int64_t>>::call(this, Input(1));
@@ -244,7 +248,7 @@ class LengthsPartitionOp : public PartitionOpBase {
     int partitions = OutputSize() / InputSize();
     CAFFE_ENFORCE_GT(partitions, 0, "Invalid number of partitions");
     CAFFE_ENFORCE_EQ(
-        Input(1).ndim(),
+        Input(1).dim(),
         1,
         "Only 1-D tensors supported as a partitioning tensor for sharding");
 

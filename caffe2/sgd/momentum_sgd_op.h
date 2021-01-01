@@ -42,7 +42,7 @@ class MomentumSGDOp final : public Operator<Context> {
   MomentumSGDOp(const OperatorDef& operator_def, Workspace* ws)
       : Operator<Context>(operator_def, ws),
         momentum_(this->template GetSingleArgument<T>("momentum", 0.0)),
-        nesterov_(this->template GetSingleArgument<int>("nesterov", 0)) {}
+        nesterov_(this->template GetSingleArgument<bool>("nesterov", false)) {}
 
   bool RunOnDevice() override {
     auto device_type = Context::GetDeviceType();
@@ -82,7 +82,7 @@ class MomentumSGDUpdateOp final : public Operator<Context> {
   MomentumSGDUpdateOp(const OperatorDef& operator_def, Workspace* ws)
       : Operator<Context>(operator_def, ws),
         momentum_(this->template GetSingleArgument<T>("momentum", 0.0)),
-        nesterov_(this->template GetSingleArgument<int>("nesterov", 0)) {}
+        nesterov_(this->template GetSingleArgument<bool>("nesterov", false)) {}
 
   bool RunOnDevice() override {
     auto device_type = Context::GetDeviceType();
@@ -122,7 +122,7 @@ class SparseMomentumSGDUpdateOp final : public Operator<Context> {
   SparseMomentumSGDUpdateOp(const OperatorDef& operator_def, Workspace* ws)
       : Operator<Context>(operator_def, ws),
         momentum_(this->template GetSingleArgument<T>("momentum", 0.0)),
-        nesterov_(this->template GetSingleArgument<int>("nesterov", 0)) {}
+        nesterov_(this->template GetSingleArgument<bool>("nesterov", false)) {}
 
   bool RunOnDevice() override {
     // Resize [potentially] out-of-place blobs
@@ -131,8 +131,9 @@ class SparseMomentumSGDUpdateOp final : public Operator<Context> {
     // Enforce shapes
     CAFFE_ENFORCE_EQ(Input(LR).numel(), 1);
     CAFFE_ENFORCE_EQ(Input(PARAM).numel(), Input(MOMENTUM).numel());
-    CAFFE_ENFORCE_EQ(Input(PARAM).size_from_dim(1),
-        Input(GRAD).size_from_dim(Input(INDICES).ndim()));
+    CAFFE_ENFORCE_EQ(
+        Input(PARAM).size_from_dim(1),
+        Input(GRAD).size_from_dim(Input(INDICES).dim()));
 
     return DispatchHelper<TensorTypes<int32_t, int64_t>>::call(
         this, Input(INDICES));
@@ -140,13 +141,13 @@ class SparseMomentumSGDUpdateOp final : public Operator<Context> {
 
   template <typename SIndex>
   bool DoRunWithType() {
-    auto block_size = Input(PARAM).numel() / Input(PARAM).dim(0);
+    auto block_size = Input(PARAM).numel() / Input(PARAM).size(0);
     auto n = Input(GRAD).numel() / block_size;
 
     const auto* gradIn = Input(GRAD).template data<T>();
     const auto* momentumIn = Input(MOMENTUM).template data<T>();
     const auto* lr = Input(LR).template data<T>();
-    const auto* paramIn = Input(PARAM).template data<T>();
+    // const auto* paramIn = Input(PARAM).template data<T>();
     const auto* indices = Input(INDICES).template data<SIndex>();
 
     auto* gradOut = Output(OUTPUT_GRAD)->template mutable_data<T>();
@@ -182,4 +183,4 @@ class SparseMomentumSGDUpdateOp final : public Operator<Context> {
   INPUT_TAGS(GRAD, MOMENTUM, LR, PARAM, INDICES);
   OUTPUT_TAGS(OUTPUT_GRAD, OUTPUT_MOMENTUM, OUTPUT_PARAM);
 };
-}
+} // namespace caffe2

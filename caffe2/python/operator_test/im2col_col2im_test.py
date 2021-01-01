@@ -1,13 +1,12 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+
+
+
+
 
 from caffe2.python import core
-from hypothesis import assume, given
+from hypothesis import assume, given, settings
 
 import caffe2.python.hypothesis_test_util as hu
-from caffe2.python.test_util import IN_CIRCLECI_FLAKY_ENV
 import hypothesis.strategies as st
 import numpy as np
 
@@ -115,7 +114,6 @@ class TestReduceFrontSum(hu.HypothesisTestCase):
             atol=1e-4,
             rtol=1e-4)
 
-    @unittest.skipIf(IN_CIRCLECI_FLAKY_ENV, "FIXME: flaky test in CircleCI")
     @given(batch_size=st.integers(1, 3),
            stride=st.integers(1, 3),
            pad=st.integers(0, 3),
@@ -125,6 +123,7 @@ class TestReduceFrontSum(hu.HypothesisTestCase):
            channels=st.integers(1, 8),
            order=st.sampled_from(["NCHW"]),
            **hu.gcs)
+    @settings(deadline=10000)
     def test_col2im_gradients(self, batch_size, stride, pad, kernel,
                               dilation, size, channels, order, gc, dc):
         assume(size >= dilation * (kernel - 1) + 1)

@@ -76,15 +76,9 @@ class OneHotCategorical(Distribution):
     def sample(self, sample_shape=torch.Size()):
         sample_shape = torch.Size(sample_shape)
         probs = self._categorical.probs
+        num_events = self._categorical._num_events
         indices = self._categorical.sample(sample_shape)
-        if torch._C._get_tracing_state():
-            # [JIT WORKAROUND] lack of support for .scatter_()
-            eye = torch.eye(self.event_shape[-1], dtype=self._param.dtype, device=self._param.device)
-            return eye[indices]
-        one_hot = probs.new_zeros(self._extended_shape(sample_shape))
-        if indices.dim() < one_hot.dim():
-            indices = indices.unsqueeze(-1)
-        return one_hot.scatter_(-1, indices, 1.)
+        return torch.nn.functional.one_hot(indices, num_events).to(probs)
 
     def log_prob(self, value):
         if self._validate_args:
@@ -102,3 +96,18 @@ class OneHotCategorical(Distribution):
         if expand:
             values = values.expand((n,) + self.batch_shape + (n,))
         return values
+
+class OneHotCategoricalStraightThrough(OneHotCategorical):
+    r"""
+    Creates a reparameterizable :class:`OneHotCategorical` distribution based on the straight-
+    through gradient estimator from [1].
+
+    [1] Estimating or Propagating Gradients Through Stochastic Neurons for Conditional Computation
+    (Bengio et al, 2013)
+    """
+    has_rsample = True
+
+    def rsample(self, sample_shape=torch.Size()):
+        samples = self.sample(sample_shape)
+        probs = self._categorical.probs  # cached via @lazy_property
+        return samples + (probs - probs.detach())

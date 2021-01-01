@@ -1,12 +1,13 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+
+
+
+
 
 import argparse
 from caffe2.proto import caffe2_pb2
 from caffe2.python import gradient_checker
 import caffe2.python.hypothesis_test_util as hu
+from caffe2.python.serialized_test import coverage
 import hypothesis as hy
 import inspect
 import numpy as np
@@ -26,7 +27,7 @@ _output_context = threading.local()
 
 def given(*given_args, **given_kwargs):
     def wrapper(f):
-        hyp_func = hy.given(*given_args, **given_kwargs)(f)
+        hyp_func = hy.seed(0)(hy.settings(max_examples=1)(hy.given(*given_args, **given_kwargs)(f)))
         fixed_seed_func = hy.seed(0)(hy.settings(max_examples=1)(hy.given(
             *given_args, **given_kwargs)(f)))
 
@@ -148,7 +149,7 @@ class SerializedTestCase(hu.HypothesisTestCase):
         inout_path = os.path.join(temp_dir, 'inout.npz')
 
         # load serialized input and output
-        loaded = np.load(inout_path, encoding='bytes')
+        loaded = np.load(inout_path, encoding='bytes', allow_pickle=True)
         loaded_inputs = loaded['inputs'].tolist()
         inputs_equal = True
         for (x, y) in zip(inputs, loaded_inputs):
@@ -180,9 +181,20 @@ class SerializedTestCase(hu.HypothesisTestCase):
             with open(grad_path, 'rb') as f:
                 loaded_grad = f.read()
             grad_proto = parse_proto(loaded_grad)
-            self.assertTrue(grad_proto == grad_ops[i])
+            self._assertSameOps(grad_proto, grad_ops[i])
 
         shutil.rmtree(temp_dir)
+
+    def _assertSameOps(self, op1, op2):
+        op1_ = caffe2_pb2.OperatorDef()
+        op1_.CopyFrom(op1)
+        op1_.arg.sort(key=lambda arg: arg.name)
+
+        op2_ = caffe2_pb2.OperatorDef()
+        op2_.CopyFrom(op2)
+        op2_.arg.sort(key=lambda arg: arg.name)
+
+        self.assertEqual(op1_, op2_)
 
     def assertSerializedOperatorChecks(
             self,
@@ -198,6 +210,9 @@ class SerializedTestCase(hu.HypothesisTestCase):
             if getattr(_output_context, 'should_generate_output', False):
                 self.serialize_test(
                     inputs, outputs, gradient_operator, op, device_option)
+                if not getattr(_output_context, 'disable_gen_coverage', False):
+                    coverage.gen_serialized_test_coverage(
+                        self.get_output_dir(), TOP_DIR)
             else:
                 self.compare_test(
                     inputs, outputs, gradient_operator, atol, rtol)
@@ -214,6 +229,7 @@ class SerializedTestCase(hu.HypothesisTestCase):
         grad_reference=None,
         atol=None,
         outputs_to_check=None,
+        ensure_outputs_are_inferred=False,
     ):
         outs = super(SerializedTestCase, self).assertReferenceChecks(
             device_option,
@@ -226,6 +242,7 @@ class SerializedTestCase(hu.HypothesisTestCase):
             grad_reference,
             atol,
             outputs_to_check,
+            ensure_outputs_are_inferred,
         )
         if not getattr(_output_context, 'disable_serialized_check', False):
             grad_ops = _getGradientOrNone(op)
@@ -254,12 +271,17 @@ def testWithArgs():
     parser.add_argument(
         '-D', '--disable-serialized_check', action='store_true', dest='disable',
         help='disable checking serialized tests')
+    parser.add_argument(
+        '-C', '--disable-gen-coverage', action='store_true',
+        dest='disable_coverage',
+        help='disable generating coverage markdown file')
     parser.add_argument('unittest_args', nargs='*')
     args = parser.parse_args()
     sys.argv[1:] = args.unittest_args
     _output_context.__setattr__('should_generate_output', args.generate)
     _output_context.__setattr__('output_dir', args.output)
     _output_context.__setattr__('disable_serialized_check', args.disable)
+    _output_context.__setattr__('disable_gen_coverage', args.disable_coverage)
 
     import unittest
     unittest.main()

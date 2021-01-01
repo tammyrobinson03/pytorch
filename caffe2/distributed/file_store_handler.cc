@@ -93,12 +93,14 @@ void FileStoreHandler::set(const std::string& name, const std::string& data) {
   CAFFE_ENFORCE_EQ(rv, 0, "rename: ", strerror(errno));
 }
 
-std::string FileStoreHandler::get(const std::string& name) {
+std::string FileStoreHandler::get(
+    const std::string& name,
+    const std::chrono::milliseconds& timeout) {
   auto path = objectPath(name);
   std::string result;
 
   // Block until key is set
-  wait({name});
+  wait({name}, timeout);
 
   std::ifstream ifs(path.c_str(), std::ios::in);
   if (!ifs) {
@@ -118,6 +120,16 @@ int64_t FileStoreHandler::add(
     int64_t /* unused */) {
   CHECK(false) << "add not implemented for FileStoreHandler";
   return 0;
+}
+
+int64_t FileStoreHandler::getNumKeys() {
+  CHECK(false) << "getNumKeys not implemented for FileStoreHandler";
+  return 0;
+}
+
+bool FileStoreHandler::deleteKey(const std::string& /* unused */) {
+  CHECK(false) << "deleteKey not implemented for FileStoreHandler";
+  return false;
 }
 
 bool FileStoreHandler::check(const std::vector<std::string>& names) {

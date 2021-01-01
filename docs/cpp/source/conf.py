@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
 # PyTorch documentation build configuration file, created by
@@ -20,10 +19,7 @@
 import os
 # sys.path.insert(0, os.path.abspath('.'))
 
-import sys
 import textwrap
-
-import sphinx_rtd_theme
 
 # -- General configuration ------------------------------------------------
 
@@ -35,9 +31,14 @@ needs_sphinx = '1.6'
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
+    'sphinx.ext.intersphinx',
     'breathe',
     'exhale'
 ]
+
+intersphinx_mapping = {
+    'pytorch': ('https://pytorch.org/docs/master', None)
+}
 
 # Setup absolute paths for communicating with breathe / exhale where
 # items are expected / should be trimmed by.
@@ -88,6 +89,8 @@ exhale_args = {
     # Example of adding contents directives on custom kinds with custom title
     "contentsTitle": "Page Contents",
     "kindsWithContentsDirectives": ["class", "file", "namespace", "struct"],
+    # Exclude PIMPL files from class hierarchy tree and namespace pages.
+    "listingExclude": [r".*Impl$"],
     ############################################################################
     # Main library page layout example configuration.                          #
     ############################################################################
@@ -116,7 +119,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'PyTorch'
-copyright = '2018, Torch Contributors'
+copyright = '2019, Torch Contributors'
 author = 'Torch Contributors'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -153,7 +156,7 @@ todo_include_todos = True
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'sphinx_rtd_theme'
+html_theme = 'pytorch_sphinx_theme'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
@@ -161,6 +164,7 @@ html_theme = 'sphinx_rtd_theme'
 #
 html_theme_options = {
     'canonical_url': 'https://pytorch.org/docs/stable/',
+    'pytorch_project': 'docs',
     'collapse_navigation': False,
     'display_version': True,
     'logo_only': True,
@@ -175,7 +179,7 @@ html_logo = os.path.join(
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 # NOTE: sharing python docs resources
-html_static_path = [os.path.join(repo_root, 'docs', 'source', '_static')]
+html_static_path = [os.path.join(repo_root, 'docs', 'cpp', 'source', '_static')]
 
 
 # Called automatically by Sphinx, making this `conf.py` an "extension".
@@ -183,21 +187,18 @@ def setup(app):
     # NOTE: in Sphinx 1.8+ `html_css_files` is an official configuration value
     # and can be moved outside of this function (and the setup(app) function
     # can be deleted).
-    html_css_files = [
-        'https://fonts.googleapis.com/css?family=Lato',
-        'css/pytorch_theme.css'  # relative to paths in `html_static_path`
-    ]
+    html_css_files = ['cpp_theme.css']
 
     # In Sphinx 1.8 it was renamed to `add_css_file`, 1.7 and prior it is
     # `add_stylesheet` (deprecated in 1.8).
-    add_css = getattr(app, 'add_css_file', getattr(app, 'add_stylesheet'))
+    add_css = getattr(app, 'add_css_file', app.add_stylesheet)
     for css_file in html_css_files:
         add_css(css_file)
 
 # -- Options for HTMLHelp output ------------------------------------------
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'PyTorchdoc'
+# htmlhelp_basename = 'PyTorchdoc'
 
 
 # -- Options for LaTeX output ---------------------------------------------

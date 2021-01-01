@@ -26,16 +26,16 @@ class ReservoirSamplingOp final : public Operator<Context> {
     auto* output = Output(RESERVOIR);
     const auto& input = Input(DATA);
 
-    CAFFE_ENFORCE_GE(input.ndim(), 1);
+    CAFFE_ENFORCE_GE(input.dim(), 1);
 
     bool output_initialized = output->numel() > 0 &&
         (static_cast<std::shared_ptr<std::vector<TensorCPU>>*>(
              output->raw_mutable_data(input.dtype()))[0] != nullptr);
 
     if (output_initialized) {
-      CAFFE_ENFORCE_EQ(output->ndim(), input.ndim());
-      for (size_t i = 1; i < input.ndim(); ++i) {
-        CAFFE_ENFORCE_EQ(output->dim(i), input.dim(i));
+      CAFFE_ENFORCE_EQ(output->dim(), input.dim());
+      for (size_t i = 1; i < input.dim(); ++i) {
+        CAFFE_ENFORCE_EQ(output->size(i), input.size(i));
       }
     }
 
@@ -81,7 +81,7 @@ class ReservoirSamplingOp final : public Operator<Context> {
     if (num_entries == 0) {
       if (!output_initialized) {
         // Get both shape and meta
-        output->CopyFrom(input, &context_);
+        output->CopyFrom(input, /* async */ true);
       }
       return true;
     }
@@ -90,7 +90,7 @@ class ReservoirSamplingOp final : public Operator<Context> {
     std::set<int64_t> unique_object_ids;
     if (InputSize() > OBJECT_ID) {
       const auto& object_id = Input(OBJECT_ID);
-      CAFFE_ENFORCE_EQ(object_id.ndim(), 1);
+      CAFFE_ENFORCE_EQ(object_id.dim(), 1);
       CAFFE_ENFORCE_EQ(object_id.numel(), num_entries);
       object_id_data = object_id.template data<int64_t>();
       unique_object_ids.insert(
@@ -99,13 +99,20 @@ class ReservoirSamplingOp final : public Operator<Context> {
 
     const auto num_new_entries = countNewEntries(unique_object_ids);
     auto num_to_copy = std::min<int32_t>(num_new_entries, numToCollect_);
-    auto output_batch_size = output_initialized ? output->dim(0) : 0;
+    auto output_batch_size = output_initialized ? output->size(0) : 0;
     auto output_num =
         std::min<size_t>(numToCollect_, output_batch_size + num_to_copy);
     // output_num is >= output_batch_size
-    output->ExtendTo(output_num, 50, &context_);
+    output->ExtendTo(output_num, 50);
     if (pos_to_object) {
-      pos_to_object->ExtendTo(output_num, 50, &context_);
+      pos_to_object->ExtendTo(output_num, 50);
+      // ExtendTo doesn't zero-initialize tensors any more, explicitly clear
+      // the memory
+      memset(
+          pos_to_object->template mutable_data<int64_t>() +
+              output_batch_size * sizeof(int64_t),
+          0,
+          (output_num - output_batch_size) * sizeof(int64_t));
     }
 
     auto* output_data =
@@ -143,10 +150,9 @@ class ReservoirSamplingOp final : public Operator<Context> {
         // append
         pos = *num_visited;
       } else {
-        auto& gen = context_.RandGenerator();
         // uniform between [0, num_visited]
-        std::uniform_int_distribution<int64_t> uniformDist(0, *num_visited);
-        pos = uniformDist(gen);
+        at::uniform_int_from_to_distribution<int64_t> uniformDist(*num_visited+1, 0);
+        pos = uniformDist(context_.RandGenerator());
         if (pos >= numToCollect_) {
           // discard
           pos = -1;
@@ -197,7 +203,7 @@ class ReservoirSamplingOp final : public Operator<Context> {
   int32_t countNewEntries(const std::set<int64_t>& unique_object_ids) {
     const auto& input = Input(DATA);
     if (InputSize() <= OBJECT_ID) {
-      return input.dim(0);
+      return input.size(0);
     }
     const auto& object_to_pos_map =
         OperatorBase::Input<MapType64To32>(OBJECT_TO_POS_MAP_IN);
@@ -254,7 +260,7 @@ This operator is thread-safe.
     .Input(
         5,
         "OBJECT_TO_POS_MAP_IN",
-        "(Optional) Auxillary bookkeeping map. This should be created from "
+        "(Optional) Auxiliary bookkeeping map. This should be created from "
         " `CreateMap` with keys of type int64 and values of type int32")
     .Input(
         6,

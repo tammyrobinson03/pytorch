@@ -146,8 +146,8 @@ class TreeWalker {
       return size;
     }
 
-    inline const TypeMeta& meta() const {
-      return walker_.input(fieldId_).meta();
+    inline const TypeMeta meta() const {
+      return walker_.input(fieldId_).dtype();
     }
 
     inline void* ptr() const {
@@ -190,6 +190,11 @@ class TreeWalker {
 };
 
 using SharedTensorVectorPtr = std::shared_ptr<std::vector<TensorCPU>>;
+
+using Shared2DTensorVectorPtr =
+    std::shared_ptr<std::vector<std::vector<caffe2::TensorCPU>>>;
+
+using Tensor2DVector = std::vector<std::vector<caffe2::TensorCPU>>;
 
 using TensorVectorPtr = std::unique_ptr<std::vector<Tensor>>;
 

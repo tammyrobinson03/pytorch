@@ -297,8 +297,8 @@ bool SumElementsGradientOp<T, Context>::RunOnDevice()
 {
   auto& X = Input(0);
   Tensor sum_grad(Input(1), CPU);
-  auto* dX = Output(0);
-  dX->ResizeLike(X);
+
+  auto* dX = Output(0, X.sizes(), at::dtype<T>());
   DCHECK_EQ(sum_grad.numel(), 1);
   math::Set<T, Context>(
       dX->numel(),
@@ -315,10 +315,9 @@ bool MaxReductionGradientOp<T, Context, ROWWISE>::RunOnDevice() {
   auto& Y = Input(1);
   auto& dY = Input(2);
 
-  auto* dX = Output(0);
-  dX->ResizeLike(X);
+  auto* dX = Output(0, X.sizes(), at::dtype<T>());
 
-  CAFFE_ENFORCE_EQ(X.ndim(), 3);
+  CAFFE_ENFORCE_EQ(X.dim(), 3);
 
   const int batch_size = X.dim32(0);
   const int M = X.dim32(1);

@@ -1,7 +1,7 @@
 #include <torch/data/datasets/mnist.h>
 
 #include <torch/data/example.h>
-#include <torch/tensor.h>
+#include <torch/types.h>
 
 #include <c10/util/Exception.h>
 
@@ -31,8 +31,8 @@ bool check_is_little_endian() {
 }
 
 constexpr uint32_t flip_endianness(uint32_t value) {
-  return ((value & 0xff) << 24) | ((value & 0xff00) << 8) |
-      ((value & 0xff0000) >> 8) | ((value & 0xff000000) >> 24);
+  return ((value & 0xffu) << 24u) | ((value & 0xff00u) << 8u) |
+      ((value & 0xff0000u) >> 8u) | ((value & 0xff000000u) >> 24u);
 }
 
 uint32_t read_int32(std::ifstream& stream) {
@@ -45,17 +45,17 @@ uint32_t read_int32(std::ifstream& stream) {
 uint32_t expect_int32(std::ifstream& stream, uint32_t expected) {
   const auto value = read_int32(stream);
   // clang-format off
-  AT_CHECK(value == expected,
+  TORCH_CHECK(value == expected,
       "Expected to read number ", expected, " but found ", value, " instead");
   // clang-format on
   return value;
 }
 
-std::string join_paths(std::string head, std::string tail) {
+std::string join_paths(std::string head, const std::string& tail) {
   if (head.back() != '/') {
     head.push_back('/');
   }
-  head += std::move(tail);
+  head += tail;
   return head;
 }
 
@@ -63,7 +63,7 @@ Tensor read_images(const std::string& root, bool train) {
   const auto path =
       join_paths(root, train ? kTrainImagesFilename : kTestImagesFilename);
   std::ifstream images(path, std::ios::binary);
-  AT_CHECK(images, "Error opening images file at ", path);
+  TORCH_CHECK(images, "Error opening images file at ", path);
 
   const auto count = train ? kTrainSize : kTestSize;
 
@@ -83,14 +83,14 @@ Tensor read_targets(const std::string& root, bool train) {
   const auto path =
       join_paths(root, train ? kTrainTargetsFilename : kTestTargetsFilename);
   std::ifstream targets(path, std::ios::binary);
-  AT_CHECK(targets, "Error opening targets file at ", path);
+  TORCH_CHECK(targets, "Error opening targets file at ", path);
 
   const auto count = train ? kTrainSize : kTestSize;
 
   expect_int32(targets, kTargetMagicNumber);
   expect_int32(targets, count);
 
-  auto tensor = torch::empty(count);
+  auto tensor = torch::empty(count, torch::kByte);
   targets.read(reinterpret_cast<char*>(tensor.data_ptr()), count);
   return tensor.to(torch::kInt64);
 }
@@ -104,12 +104,20 @@ Example<> MNIST::get(size_t index) {
   return {images_[index], targets_[index]};
 }
 
-size_t MNIST::size() const {
+optional<size_t> MNIST::size() const {
   return images_.size(0);
 }
 
 bool MNIST::is_train() const noexcept {
-  return size() == kTrainSize;
+  return images_.size(0) == kTrainSize;
+}
+
+const Tensor& MNIST::images() const {
+  return images_;
+}
+
+const Tensor& MNIST::targets() const {
+  return targets_;
 }
 
 } // namespace datasets

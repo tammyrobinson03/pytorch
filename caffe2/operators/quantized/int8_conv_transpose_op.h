@@ -17,8 +17,9 @@ namespace int8 {
 class Int8ConvTransposeOp final : public ConvTransposeUnpoolBase<CPUContext> {
  public:
   USE_CONV_TRANSPOSE_UNPOOL_BASE_FUNCTIONS(CPUContext);
-  Int8ConvTransposeOp(const OperatorDef& def, Workspace* ws)
-      : ConvTransposeUnpoolBase(def, ws), gemm_context_(ws->GetThreadPool()) {
+  template <class... Args>
+  explicit Int8ConvTransposeOp(Args&&... args)
+      : ConvTransposeUnpoolBase(std::forward<Args>(args)...) {
     OPERATOR_NEEDS_FEATURE(
         this->order_ == StorageOrder::NHWC,
         "Int8ConvTransposeOp only supports NHWC order");
@@ -46,24 +47,25 @@ class Int8ConvTransposeOp final : public ConvTransposeUnpoolBase<CPUContext> {
     Y->scale = Y_scale;
     Y->zero_point = Y_offset;
 
-    const auto N = X.t.dim(0);
-    const auto IH = X.t.dim(1);
-    const auto IW = X.t.dim(2);
-    const auto IC = X.t.dim(3);
+    const auto N = X.t.size(0);
+    const auto IH = X.t.size(1);
+    const auto IW = X.t.size(2);
+    const auto IC = X.t.size(3);
 
-    CHECK_EQ(IC, W.t.dim(0));
-    const auto KH = W.t.dim(1);
-    const auto KW = W.t.dim(2);
-    const auto OC = W.t.dim(3);
+    CHECK_EQ(IC, W.t.size(0));
+    const auto KH = W.t.size(1);
+    const auto KW = W.t.size(2);
+    const auto OC = W.t.size(3);
 
-    ConvTransposeUnpoolBase<CPUContext>::SetOutputSize(X.t, &(Y->t), OC);
-    CHECK_EQ(OC, Y->t.dim(3));
+    auto sizes = ConvTransposeUnpoolBase<CPUContext>::GetOutputSize(X.t, OC);
+    ReinitializeTensor(&(Y->t), sizes, at::dtype<uint8_t>().device(CPU));
+    CHECK_EQ(OC, Y->t.size(3));
 
     runWithSharedBuffer<CPUContext>(ws_, [&](Tensor* buffer) {
       initQNNPACK();
 
       pthreadpool_t threadpool =
-          reinterpret_cast<pthreadpool_t>(gemm_context_.threadPool());
+          reinterpret_cast<pthreadpool_t>(ws_->GetThreadPool());
 
       if (this->qnnpackObject_ == nullptr) {
         const qnnp_status createStatus = qnnp_create_deconvolution2d_nhwc_q8(
@@ -86,12 +88,18 @@ class Int8ConvTransposeOp final : public ConvTransposeUnpoolBase<CPUContext> {
             X.scale,
             W.zero_point,
             W.scale,
+#ifndef _MSC_VER
             W.t.template data<uint8_t>(),
             B.t.template data<int32_t>(),
+#else
+            W.t.data<uint8_t>(),
+            B.t.data<int32_t>(),
+#endif
             Y->zero_point,
             Y->scale,
             std::numeric_limits<uint8_t>::min(),
             std::numeric_limits<uint8_t>::max(),
+            0 /* flags */,
             &this->qnnpackObject_);
         CAFFE_ENFORCE(
             createStatus == qnnp_status_success,
@@ -106,33 +114,33 @@ class Int8ConvTransposeOp final : public ConvTransposeUnpoolBase<CPUContext> {
         memcpy(inputPtr, X.t.template data<uint8_t>(), X.t.numel());
       }
 
-      if (lastBatchSize_ != static_cast<size_t>(X.t.dim(0)) ||
-          lastInputHeight_ != static_cast<size_t>(X.t.dim(1)) ||
-          lastInputWidth_ != static_cast<size_t>(X.t.dim(2)) ||
+      if (lastBatchSize_ != static_cast<size_t>(X.t.size(0)) ||
+          lastInputHeight_ != static_cast<size_t>(X.t.size(1)) ||
+          lastInputWidth_ != static_cast<size_t>(X.t.size(2)) ||
           lastInputPointer_ != inputPtr ||
           lastOutputPointer_ != Y->t.template mutable_data<uint8_t>()) {
         const qnnp_status setupStatus = qnnp_setup_deconvolution2d_nhwc_q8(
             this->qnnpackObject_,
-            X.t.dim(0),
-            X.t.dim(1),
-            X.t.dim(2),
+            X.t.size(0),
+            X.t.size(1),
+            X.t.size(2),
             inputPtr,
-            X.t.dim(3) /* input pixel stride */,
+            X.t.size(3) /* input pixel stride */,
             Y->t.template mutable_data<uint8_t>(),
-            Y->t.dim(3) /* output pixel stride */,
+            Y->t.size(3) /* output pixel stride */,
             nullptr /* threadpool */);
         CAFFE_ENFORCE(
             setupStatus == qnnp_status_success,
             "failed to setup QNNPACK convolution object");
 
-        lastBatchSize_ = static_cast<size_t>(X.t.dim(0));
-        lastInputHeight_ = static_cast<size_t>(X.t.dim(1));
-        lastInputWidth_ = static_cast<size_t>(X.t.dim(2));
+        lastBatchSize_ = static_cast<size_t>(X.t.size(0));
+        lastInputHeight_ = static_cast<size_t>(X.t.size(1));
+        lastInputWidth_ = static_cast<size_t>(X.t.size(2));
         lastInputPointer_ = inputPtr;
         lastOutputPointer_ = Y->t.template mutable_data<uint8_t>();
       }
 
-#ifdef FBCODE_CAFFE2
+#if defined(FBCODE_CAFFE2) || !defined(USE_INTERNAL_PTHREADPOOL_IMPL)
       const qnnp_status runStatus =
           qnnp_run_operator(this->qnnpackObject_, nullptr /* thread pool */);
 #else
@@ -147,7 +155,6 @@ class Int8ConvTransposeOp final : public ConvTransposeUnpoolBase<CPUContext> {
   }
 
  private:
-  C2GEMMContext gemm_context_;
   // QNNPACK convolution object
   qnnp_operator_t qnnpackObject_{nullptr};
   // batch size in the previous call to RunOnDeviceWithOrderNHWC

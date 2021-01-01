@@ -1,9 +1,9 @@
 #pragma once
 
 #include <torch/data/example.h>
-#include <torch/tensor.h>
+#include <torch/types.h>
 
-#include <ATen/core/ArrayRef.h>
+#include <c10/util/ArrayRef.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -15,7 +15,7 @@ namespace torch {
 namespace data {
 namespace datasets {
 template <typename S, typename T>
-struct MapDataset;
+class MapDataset;
 template <typename D, typename T>
 MapDataset<D, T> map(D, T); // NOLINT
 } // namespace datasets
@@ -25,36 +25,40 @@ MapDataset<D, T> map(D, T); // NOLINT
 namespace torch {
 namespace data {
 namespace datasets {
+namespace detail {
+template <typename T>
+struct is_optional : std::false_type {};
+template <typename T>
+struct is_optional<optional<T>> : std::true_type {};
+} // namespace detail
 
 /// A dataset that can yield data only in batches.
-template <typename Self, typename Batch = std::vector<Example<>>>
+template <
+    typename Self,
+    typename Batch = std::vector<Example<>>,
+    typename BatchRequest = ArrayRef<size_t>>
 class BatchDataset {
  public:
   using SelfType = Self;
   using BatchType = Batch;
+  using BatchRequestType = BatchRequest;
+  constexpr static bool is_stateful = detail::is_optional<BatchType>::value;
 
   virtual ~BatchDataset() = default;
 
-  /// Returns a batch of data.
-  ///
-  /// Typically the `ArrayRef` will point to a vector of individual index values
-  /// at which to index the dataset. However, some datasets may not support
-  /// random indexing and instead just require the batch size, so that they can
-  /// pull the next batch of data from some (potentially infinite) stream, for
-  /// example. In that case, you can have the `ArrayRef` be just a single
-  /// number.
-  virtual Batch get_batch(ArrayRef<size_t> indices) = 0;
+  /// Returns a batch of data given an index.
+  virtual Batch get_batch(BatchRequest request) = 0;
 
-  /// Returns the size of the dataset.
-  virtual size_t size() const = 0;
+  /// Returns the size of the dataset, or an empty optional if it is unsized.
+  virtual optional<size_t> size() const = 0;
 
-  /// Creates a `MapDataset` that applies the given `tranform` to this dataset.
+  /// Creates a `MapDataset` that applies the given `transform` to this dataset.
   template <typename TransformType>
   MapDataset<Self, TransformType> map(TransformType transform) & {
     return datasets::map(static_cast<Self&>(*this), std::move(transform));
   }
 
-  /// Creates a `MapDataset` that applies the given `tranform` to this dataset.
+  /// Creates a `MapDataset` that applies the given `transform` to this dataset.
   template <typename TransformType>
   MapDataset<Self, TransformType> map(TransformType transform) && {
     return datasets::map(
@@ -88,6 +92,12 @@ class Dataset : public BatchDataset<Self, std::vector<SingleExample>> {
     return batch;
   }
 };
+
+/// A `StreamDataset` represents a dataset that is a potentially infinite stream.
+/// It takes as batch index only a number, which is the batch size, and yields
+/// that many elements from the stream.
+template <typename Self, typename Batch = std::vector<Example<>>>
+using StreamDataset = BatchDataset<Self, Batch, /*BatchRequest=*/size_t>;
 } // namespace datasets
 } // namespace data
 } // namespace torch

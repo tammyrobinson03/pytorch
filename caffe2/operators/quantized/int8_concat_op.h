@@ -12,8 +12,9 @@ namespace int8 {
 
 class Int8ConcatOp final : public Operator<CPUContext> {
  public:
-  Int8ConcatOp(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<CPUContext>(operator_def, ws) {
+  template <class... Args>
+  explicit Int8ConcatOp(Args&&... args)
+      : Operator<CPUContext>(std::forward<Args>(args)...) {
     // concat supports more than NHWC format
     if (this->template GetSingleArgument<string>("order", "") == "NHWC") {
       // Default to C axis
@@ -47,15 +48,15 @@ class Int8ConcatOp final : public Operator<CPUContext> {
     }
     for (auto i = 1; i < InputSize(); ++i) {
       const auto& Xi = Inputs()[i]->template Get<Int8TensorCPU>();
-      CHECK_EQ(Xi.t.ndim(), Y_dims.size());
+      CHECK_EQ(Xi.t.dim(), Y_dims.size());
       for (auto j = 0; j < Y_dims.size(); ++j) {
         if (j != axis_) {
-          CHECK_EQ(Xi.t.dim(j), Y_dims[j]);
+          CHECK_EQ(Xi.t.size(j), Y_dims[j]);
         }
       }
-      Y_dims[axis_] += Xi.t.dim(axis_);
+      Y_dims[axis_] += Xi.t.size(axis_);
     }
-    Y->t.Resize(Y_dims);
+    ReinitializeTensor(&Y->t, Y_dims, at::dtype<uint8_t>().device(CPU));
     int before = X0.t.size_to_dim(axis_);
     int after = X0.t.size_from_dim(axis_ + 1);
     const auto C_total = Y_dims[axis_];
@@ -63,7 +64,7 @@ class Int8ConcatOp final : public Operator<CPUContext> {
     for (auto i = 0; i < InputSize(); ++i) {
       const auto& Xi = Inputs()[i]->template Get<Int8TensorCPU>();
       // Copy the NxHxWxC input slice to NxHxWx[C_offset:C_offset + C].
-      const auto Ci = Xi.t.dim(axis_);
+      const auto Ci = Xi.t.size(axis_);
       math::CopyMatrix<CPUContext>(
           Xi.t.itemsize(),
           before,

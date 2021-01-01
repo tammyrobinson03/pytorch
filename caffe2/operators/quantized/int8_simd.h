@@ -18,46 +18,6 @@
 #endif
 
 #if defined(__SSE4_2__) && defined(__clang__)
+#include "NEON_2_SSE.h"
 #define INT8_NEON_SIMD
-
-#include "neon2sse.h"
-// Add GEMMLOWP SIMD type wrappers for the NEON2SSE SIMD types.
-
-namespace gemmlowp {
-template <>
-struct FixedPointRawTypeTraits<int32x4_t> {
-  typedef std::int32_t ScalarRawType;
-  static const int kLanes = 4;
-};
-
-template <>
-inline int32x4_t Dup<int32x4_t>(std::int32_t x) {
-  return vdupq_n_s32(x);
-}
-
-template <>
-inline int32x4_t BitAnd(int32x4_t a, int32x4_t b) {
-  return vandq_s32(a, b);
-}
-
-template <>
-inline int32x4_t Add(int32x4_t a, int32x4_t b) {
-  return vaddq_s32(a, b);
-}
-
-template <>
-inline int32x4_t ShiftRight(int32x4_t a, int offset) {
-  return vshlq_s32(a, vdupq_n_s32(-offset));
-}
-
-template <>
-inline int32x4_t MaskIfLessThan(int32x4_t a, int32x4_t b) {
-  return vreinterpretq_s32_u32(vcltq_s32(a, b));
-}
-
-template <>
-inline int32x4_t MaskIfGreaterThan(int32x4_t a, int32x4_t b) {
-  return vreinterpretq_s32_u32(vcgtq_s32(a, b));
-}
-} // namespace gemmlowp
 #endif

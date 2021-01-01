@@ -2,7 +2,7 @@ import torch
 from torch._six import nan
 from torch.distributions import constraints
 from torch.distributions.distribution import Distribution
-from torch.distributions.utils import probs_to_logits, logits_to_probs, lazy_property, broadcast_all
+from torch.distributions.utils import probs_to_logits, logits_to_probs, lazy_property
 
 
 class Categorical(Distribution):
@@ -16,14 +16,14 @@ class Categorical(Distribution):
 
     Samples are integers from :math:`\{0, \ldots, K-1\}` where `K` is ``probs.size(-1)``.
 
-    If :attr:`probs` is 1D with length-`K`, each element is the relative
+    If :attr:`probs` is 1-dimensional with length-`K`, each element is the relative
     probability of sampling the class at that index.
 
-    If :attr:`probs` is 2D, it is treated as a batch of relative probability
-    vectors.
+    If :attr:`probs` is N-dimensional, the first N-1 dimensions are treated as a batch of 
+    relative probability vectors.
 
     .. note:: :attr:`probs` must be non-negative, finite and have a non-zero sum,
-              and it will be normalized to sum to 1.
+              and it will be normalized to sum to 1 along the last dimension.
 
     See also: :func:`torch.multinomial`
 
@@ -35,7 +35,7 @@ class Categorical(Distribution):
 
     Args:
         probs (Tensor): event probabilities
-        logits (Tensor): event log probabilities
+        logits (Tensor): event log-odds
     """
     arg_constraints = {'probs': constraints.simplex,
                        'logits': constraints.real}
@@ -51,6 +51,7 @@ class Categorical(Distribution):
         else:
             if logits.dim() < 1:
                 raise ValueError("`logits` parameter must be at least one-dimensional.")
+            # Normalize
             self.logits = logits - logits.logsumexp(dim=-1, keepdim=True)
         self._param = self.probs if probs is not None else self.logits
         self._num_events = self._param.size()[-1]
@@ -64,7 +65,7 @@ class Categorical(Distribution):
         if 'probs' in self.__dict__:
             new.probs = self.probs.expand(param_shape)
             new._param = new.probs
-        else:
+        if 'logits' in self.__dict__:
             new.logits = self.logits.expand(param_shape)
             new._param = new.logits
         new._num_events = self._num_events
@@ -93,22 +94,18 @@ class Categorical(Distribution):
 
     @property
     def mean(self):
-        return self.probs.new_tensor(nan).expand(self._extended_shape())
+        return torch.full(self._extended_shape(), nan, dtype=self.probs.dtype, device=self.probs.device)
 
     @property
     def variance(self):
-        return self.probs.new_tensor(nan).expand(self._extended_shape())
+        return torch.full(self._extended_shape(), nan, dtype=self.probs.dtype, device=self.probs.device)
 
     def sample(self, sample_shape=torch.Size()):
-        sample_shape = self._extended_shape(sample_shape)
-        param_shape = sample_shape + torch.Size((self._num_events,))
-        probs = self.probs.expand(param_shape)
-        if self.probs.dim() == 1 or self.probs.size(0) == 1:
-            probs_2d = probs.view(-1, self._num_events)
-        else:
-            probs_2d = probs.contiguous().view(-1, self._num_events)
-        sample_2d = torch.multinomial(probs_2d, 1, True)
-        return sample_2d.contiguous().view(sample_shape)
+        if not isinstance(sample_shape, torch.Size):
+            sample_shape = torch.Size(sample_shape)
+        probs_2d = self.probs.reshape(-1, self._num_events)
+        samples_2d = torch.multinomial(probs_2d, sample_shape.numel(), True).T
+        return samples_2d.reshape(self._extended_shape(sample_shape))
 
     def log_prob(self, value):
         if self._validate_args:
@@ -119,7 +116,9 @@ class Categorical(Distribution):
         return log_pmf.gather(-1, value).squeeze(-1)
 
     def entropy(self):
-        p_log_p = self.logits * self.probs
+        min_real = torch.finfo(self.logits.dtype).min
+        logits = torch.clamp(self.logits, min=min_real)
+        p_log_p = logits * self.probs
         return -p_log_p.sum(-1)
 
     def enumerate_support(self, expand=True):

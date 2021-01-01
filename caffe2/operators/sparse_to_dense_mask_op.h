@@ -5,9 +5,12 @@
 #include <unordered_map>
 #include <vector>
 #include "caffe2/core/context.h"
+#include "caffe2/core/export_caffe2_op_to_c10.h"
 #include "caffe2/core/operator.h"
 #include "caffe2/core/tensor.h"
 #include "caffe2/utils/math.h"
+
+C10_DECLARE_EXPORT_CAFFE2_OP_TO_C10(SparseToDenseMask);
 
 namespace caffe2 {
 
@@ -15,8 +18,9 @@ template <class Context>
 class SparseToDenseMaskBase : public Operator<Context> {
  public:
   USE_OPERATOR_CONTEXT_FUNCTIONS;
-  SparseToDenseMaskBase(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<Context>(operator_def, ws) {
+  template <class... Args>
+  explicit SparseToDenseMaskBase(Args&&... args)
+      : Operator<Context>(std::forward<Args>(args)...) {
     std::vector<int64_t> mask =
         this->template GetRepeatedArgument<int64_t>("mask");
     featuresCount_ = mask.size();
@@ -42,7 +46,7 @@ class SparseToDenseMaskBase : public Operator<Context> {
 
   std::unordered_map<int64_t, int> sparse_;
   std::vector<int> dense_;
-  int featuresCount_;
+  size_t featuresCount_;
 
   inline int getFeatureIdx(int64_t id) const {
     if (id >= kMaxDenseSize) {
@@ -62,13 +66,13 @@ template <class Context>
 class SparseToDenseMaskOp : public SparseToDenseMaskBase<Context> {
  public:
   USE_OPERATOR_CONTEXT_FUNCTIONS;
-  SparseToDenseMaskOp(const OperatorDef& operator_def, Workspace* ws)
-      : SparseToDenseMaskBase<Context>(operator_def, ws) {
-    returnPresenceMask_ = this->template GetSingleArgument<bool>(
-        "return_presence_mask", false);
-    maxSkippedSparseIndices_ =
-        this->template GetSingleArgument<int32_t>(
-            "max_skipped_indices", kMaxSkippedSparseIndices);
+  template <class... Args>
+  explicit SparseToDenseMaskOp(Args&&... args)
+      : SparseToDenseMaskBase<Context>(std::forward<Args>(args)...) {
+    returnPresenceMask_ =
+        this->template GetSingleArgument<bool>("return_presence_mask", false);
+    maxSkippedRows_ = this->template GetSingleArgument<int32_t>(
+        "max_skipped_indices", kMaxSkippedSparseIndices);
   }
 
   bool RunOnDevice() override {
@@ -79,12 +83,12 @@ class SparseToDenseMaskOp : public SparseToDenseMaskBase<Context> {
   template <typename TInd>
   bool DoRunWithType() {
     auto& sparse_indices = Input(INDICES);
-    CAFFE_ENFORCE_EQ(sparse_indices.ndim(), 1);
+    CAFFE_ENFORCE_EQ(sparse_indices.dim(), 1);
     auto& sparse_values = Input(VALUES);
-    CAFFE_ENFORCE_GE(sparse_values.ndim(), 1);
-    CAFFE_ENFORCE_EQ(sparse_indices.numel(), sparse_values.dim(0));
+    CAFFE_ENFORCE_GE(sparse_values.dim(), 1);
+    CAFFE_ENFORCE_EQ(sparse_indices.numel(), sparse_values.size(0));
     auto& default_value = Input(DEFAULT);
-    CAFFE_ENFORCE_EQ(default_value.ndim() + 1, sparse_values.ndim());
+    CAFFE_ENFORCE_EQ(default_value.dim() + 1, sparse_values.dim());
     CAFFE_ENFORCE_EQ(default_value.numel(), sparse_values.size_from_dim(1));
     CAFFE_ENFORCE(sparse_values.dtype() == default_value.dtype());
 
@@ -96,7 +100,7 @@ class SparseToDenseMaskOp : public SparseToDenseMaskBase<Context> {
     int64_t block_size = default_value.numel();
     size_t block_nbytes = default_value.nbytes();
 
-    const int cols = this->featuresCount_;
+    const size_t cols = this->featuresCount_;
     int rows = -1;
     int32_t sparse_indices_length = sparse_indices.dim32(0);
     const int32_t* lengths_vec = nullptr;
@@ -108,7 +112,7 @@ class SparseToDenseMaskOp : public SparseToDenseMaskBase<Context> {
     vector<int64_t> shape;
     if (InputSize() == 4) {
       auto& lengths = Input(LENGTHS);
-      CAFFE_ENFORCE_EQ(lengths.ndim(), 1);
+      CAFFE_ENFORCE_EQ(lengths.dim(), 1);
       lengths_vec = lengths.template data<int32_t>();
       rows = lengths.dim32(0);
     }
@@ -149,14 +153,13 @@ class SparseToDenseMaskOp : public SparseToDenseMaskBase<Context> {
 
     int64_t offset = 0;
     for (int r = 0; r < rows; r++) {
+      bool skippedSparseIndex = false;
       for (int c = 0; c < lengths_vec[r]; c++) {
         const auto sparse_index = sparse_indices_vec[offset + c];
         if (sparse_index < 0 ||
             sparse_index >= std::numeric_limits<TInd>::max()) {
-          CAFFE_ENFORCE_LT(
-              ++skippedSparseIndices_,
-              maxSkippedSparseIndices_,
-              "Too many sparse indices skipped");
+          skippedSparseIndex = true;
+          LOG(WARNING) << "Skipping invalid sparse index: " << sparse_index;
           continue;
         }
         int idx = this->getFeatureIdx(sparse_index);
@@ -171,6 +174,11 @@ class SparseToDenseMaskOp : public SparseToDenseMaskBase<Context> {
           }
         }
       }
+      skippedRows_ += skippedSparseIndex;
+      CAFFE_ENFORCE_LT(
+          skippedRows_,
+          maxSkippedRows_,
+          "Too many rows with invalid sparse indices skipped");
       offset += lengths_vec[r];
     }
 
@@ -178,11 +186,11 @@ class SparseToDenseMaskOp : public SparseToDenseMaskBase<Context> {
   }
 
  private:
-  static const uint32_t kMaxSkippedSparseIndices = 5;
+  static const uint32_t kMaxSkippedSparseIndices = 50;
 
   bool returnPresenceMask_;
-  uint32_t maxSkippedSparseIndices_ = 0;
-  uint32_t skippedSparseIndices_ = 0;
+  uint32_t maxSkippedRows_ = 0;
+  uint32_t skippedRows_ = 0;
 
   INPUT_TAGS(INDICES, VALUES, DEFAULT, LENGTHS);
   OUTPUT_TAGS(OUTPUTVALUE, PRESENCEMASK);
@@ -192,8 +200,9 @@ template <class Context>
 class SparseToDenseMaskGradientOp : public SparseToDenseMaskBase<Context> {
  public:
   USE_OPERATOR_CONTEXT_FUNCTIONS;
-  SparseToDenseMaskGradientOp(const OperatorDef& operator_def, Workspace* ws)
-      : SparseToDenseMaskBase<Context>(operator_def, ws) {}
+  template <class... Args>
+  explicit SparseToDenseMaskGradientOp(Args&&... args)
+      : SparseToDenseMaskBase<Context>(std::forward<Args>(args)...) {}
 
   bool RunOnDevice() override {
     return DispatchHelper<TensorTypes<int32_t, int64_t>>::call(
@@ -203,13 +212,13 @@ class SparseToDenseMaskGradientOp : public SparseToDenseMaskBase<Context> {
   template <typename TInd>
   bool DoRunWithType() {
     auto& sparse_indices = Input(INDICES);
-    CAFFE_ENFORCE_EQ(sparse_indices.ndim(), 1);
+    CAFFE_ENFORCE_EQ(sparse_indices.dim(), 1);
     auto& gradient_output = Input(GOUTPUT);
 
     int64_t block_size = gradient_output.size_from_dim(1);
     size_t block_nbytes = gradient_output.itemsize() * block_size;
 
-    const int cols = this->featuresCount_;
+    const size_t cols = this->featuresCount_;
     int rows = -1;
     int iter_offset = 1;
     int32_t default_length = sparse_indices.dim32(0);
@@ -222,12 +231,12 @@ class SparseToDenseMaskGradientOp : public SparseToDenseMaskBase<Context> {
       auto& lengths = Input(LENGTHS);
       lengths_vec = lengths.template data<int32_t>();
       rows = lengths.dim32(0);
-      CAFFE_ENFORCE_EQ(lengths.ndim(), 1);
-      CAFFE_ENFORCE_GE(gradient_output.ndim(), 2);
-      CAFFE_ENFORCE_EQ(gradient_output.dim(0), rows);
-      CAFFE_ENFORCE_EQ(gradient_output.dim(1), cols);
-      block_nbytes /= gradient_output.dim(1);
-      block_size /= gradient_output.dim(1);
+      CAFFE_ENFORCE_EQ(lengths.dim(), 1);
+      CAFFE_ENFORCE_GE(gradient_output.dim(), 2);
+      CAFFE_ENFORCE_EQ(gradient_output.size(0), rows);
+      CAFFE_ENFORCE_EQ(gradient_output.size(1), cols);
+      block_nbytes /= gradient_output.size(1);
+      block_size /= gradient_output.size(1);
       iter_offset += 1;
     }
     if (rows == -1) {
@@ -235,8 +244,8 @@ class SparseToDenseMaskGradientOp : public SparseToDenseMaskBase<Context> {
       // mask.size() * feature_dim
       rows = 1;
       lengths_vec = &default_length;
-      CAFFE_ENFORCE_GE(gradient_output.ndim(), 1);
-      CAFFE_ENFORCE_EQ(gradient_output.dim(0), cols);
+      CAFFE_ENFORCE_GE(gradient_output.dim(), 1);
+      CAFFE_ENFORCE_EQ(gradient_output.size(0), cols);
     }
     shape.push_back(default_length);
     // insert feature_dim
@@ -252,6 +261,7 @@ class SparseToDenseMaskGradientOp : public SparseToDenseMaskBase<Context> {
 
     char* output_data =
         static_cast<char*>(output->raw_mutable_data(gradient_output.dtype()));
+    memset(output_data, 0, output->nbytes());
     math::Set<char, Context>(
         default_length * gradient_output.itemsize(), 0, output_data, &context_);
 
